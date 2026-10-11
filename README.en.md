@@ -1,16 +1,36 @@
-[Русский](README.md) / **English**
+<p align="center">
+  <a href="README.md">Русский</a> / <strong>English</strong>
+</p>
 
-# qplay
+<h1 align="center">qplay</h1>
 
-[![Windows x64](https://img.shields.io/badge/Windows-x64-0078d4)](https://qbutt-org.github.io/qplay/en/)
-[![Latest release](https://img.shields.io/github/v/release/qbutt-org/qplay?label=release&color=009df7)](https://github.com/qbutt-org/qplay/releases/latest)
-[![Licenses](https://img.shields.io/badge/license-GPL-blue)](LICENSE)
+<p align="center">
+  A video player based on <a href="https://mpv.io/">mpv</a>.
+</p>
 
-A video player based on [mpv](https://mpv.io/).
+<p align="center">
+  <a href="https://github.com/qbutt-org/qplay/releases/latest/download/qplay-setup.exe">
+    <img alt="Download qplay for Windows" src="https://img.shields.io/badge/DOWNLOAD-Windows-009df7?style=for-the-badge">
+  </a>
+  <a href="https://github.com/qbutt-org/qplay/releases">
+    <img alt="All releases" src="https://img.shields.io/badge/RELEASES-all_versions-24292f?style=for-the-badge&amp;logo=github&amp;logoColor=white">
+  </a>
+</p>
 
-[![Download for Windows](docs/assets/download.en.svg)](https://github.com/qbutt-org/qplay/releases/latest/download/qplay-setup.exe)
+<p align="center">
+  <img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-0078d4?style=flat-square">
+  <a href="https://github.com/qbutt-org/qplay/releases/latest">
+    <img alt="Latest release" src="https://img.shields.io/github/v/release/qbutt-org/qplay?label=release&amp;color=009df7&amp;style=flat-square">
+  </a>
+  <a href="LICENSE">
+    <img alt="GPL" src="https://img.shields.io/badge/license-GPL-blue?style=flat-square">
+  </a>
+</p>
 
-[Website](https://qbutt-org.github.io/qplay/en/) / [Portable](https://github.com/qbutt-org/qplay/releases/latest/download/qplay-portable.zip) / [What's new](https://github.com/qbutt-org/qplay/releases/latest)
+<p align="center">
+  <a href="https://qbutt-org.github.io/qplay/en/">Website</a> /
+  <a href="https://github.com/qbutt-org/qplay/releases/latest/download/qplay-portable.zip">Portable</a>
+</p>
 
 ## Installation
 

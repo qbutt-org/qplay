@@ -1,16 +1,36 @@
-**Русский** / [English](README.en.md)
+<p align="center">
+  <strong>Русский</strong> / <a href="README.en.md">English</a>
+</p>
 
-# qplay
+<h1 align="center">qplay</h1>
 
-[![Windows x64](https://img.shields.io/badge/Windows-x64-0078d4)](https://qbutt-org.github.io/qplay/)
-[![Последний релиз](https://img.shields.io/github/v/release/qbutt-org/qplay?label=release&color=009df7)](https://github.com/qbutt-org/qplay/releases/latest)
-[![Лицензии](https://img.shields.io/badge/license-GPL-blue)](LICENSE)
+<p align="center">
+  Видеоплеер на основе <a href="https://mpv.io/">mpv</a>.
+</p>
 
-qplay — видеоплеер на основе [mpv](https://mpv.io/).
+<p align="center">
+  <a href="https://github.com/qbutt-org/qplay/releases/latest/download/qplay-setup.exe">
+    <img alt="Скачать qplay для Windows" src="https://img.shields.io/badge/%D0%A1%D0%9A%D0%90%D0%A7%D0%90%D0%A2%D0%AC-Windows-009df7?style=for-the-badge">
+  </a>
+  <a href="https://github.com/qbutt-org/qplay/releases">
+    <img alt="Все релизы" src="https://img.shields.io/badge/%D0%A0%D0%95%D0%9B%D0%98%D0%97%D0%AB-%D0%B2%D1%81%D0%B5_%D0%B2%D0%B5%D1%80%D1%81%D0%B8%D0%B8-24292f?style=for-the-badge&amp;logo=github&amp;logoColor=white">
+  </a>
+</p>
 
-[![Скачать для Windows](docs/assets/download.svg)](https://github.com/qbutt-org/qplay/releases/latest/download/qplay-setup.exe)
+<p align="center">
+  <img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-0078d4?style=flat-square">
+  <a href="https://github.com/qbutt-org/qplay/releases/latest">
+    <img alt="Последний релиз" src="https://img.shields.io/github/v/release/qbutt-org/qplay?label=release&amp;color=009df7&amp;style=flat-square">
+  </a>
+  <a href="LICENSE">
+    <img alt="GPL" src="https://img.shields.io/badge/license-GPL-blue?style=flat-square">
+  </a>
+</p>
 
-[Сайт](https://qbutt-org.github.io/qplay/) / [Portable](https://github.com/qbutt-org/qplay/releases/latest/download/qplay-portable.zip) / [Что нового](https://github.com/qbutt-org/qplay/releases/latest)
+<p align="center">
+  <a href="https://qbutt-org.github.io/qplay/">Сайт</a> /
+  <a href="https://github.com/qbutt-org/qplay/releases/latest/download/qplay-portable.zip">Portable</a>
+</p>
 
 ## Установка
 
