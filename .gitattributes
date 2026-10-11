@@ -1,0 +1,9 @@
+* text=auto eol=lf
+*.exe -text
+*.dll -text
+*.onnx -text
+*.ttf -text
+*.ico -text
+*.zip -text
+# These exact upstream build inputs are bound by their own SHA256 manifest.
+profile/tools/framegen-vsov/** -text

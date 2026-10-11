@@ -1,0 +1,9 @@
+{
+    "name": "qplay",
+    "version": "1.0.0",
+    "private": true,
+    "scripts": {
+        "build": "bun scripts/build.ts",
+        "smoke": "bun scripts/smoke.ts"
+    }
+}

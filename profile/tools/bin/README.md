@@ -1,0 +1,15 @@
+# Media tools
+
+`scripts/build.ts` bundles the pinned mpv, FFmpeg, ffprobe and yt-dlp executables with the qplay profile and verifies archives and files against `upstream-lock.json`. The qplay launcher verifies the complete immutable payload against `build-manifest.json` before playback or runtime discovery. Neither path runs upstream installers or uses media tools from PATH.
+
+`ffprobe.exe` is used for video analysis and shader benchmarks. The pinned MSYS2 CLANG64 FFmpeg 9.0.2-6 package supplies both FFmpeg and ffprobe. Packaging places these tools and yt-dlp beside their shared DLLs at `engine/`, so callers can execute the discovered absolute paths without changing their working directory or PATH. Player supplies the verified probe path through `QPLAY_FFPROBE`. Original package licenses are retained under `engine/licenses/msys2`; exact package recipes, patches, source archives and dependency sources are in the public source archive pinned by `upstream-lock.json` and identified in `licenses/NOTICE.txt`.
+
+The prepared mpv profile keeps certificate and host-name verification enabled. `profile/certs/cacert.pem` is the pinned certifi Mozilla CA collection, used together with native Windows trust. Its source and license are recorded in `upstream-lock.json` and `licenses/`.
+
+`framegen-manager.exe` selects the available NVIDIA/TensorRT or Intel/OpenVINO backend and prepares its pinned runtime in qplay's data directory. Its source, Cargo lock, package recipe and runtime catalog are maintained under `profile/tools/framegen-manager`.
+
+`framegen-bootstrap.dll` is the mpv C plugin that validates the selected manager manifest and loads its portable VSScript into the running player. Its source and package recipe are under `profile/tools/framegen-bootstrap`.
+
+`framegen-vsov.dll` is the modified GPL-3.0 OpenVINO plugin. Corresponding source, build instructions, modification notice and dependency licenses are included under `profile/tools/framegen-vsov`.
+
+The manager and bootstrap third-party notices are generated from their exact Cargo locks. `Rust-Standard-Library-COPYRIGHT.html` records the licenses from their pinned Rust toolchain. The component package recipes check these notices and compiler identity before producing a binary.
