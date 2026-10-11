@@ -10,7 +10,7 @@ A video player based on [mpv](https://mpv.io/).
 
 [![Download for Windows](docs/assets/download.en.svg)](https://github.com/qbutt-org/qplay/releases/latest/download/qplay-setup.exe)
 
-[Website](https://qbutt-org.github.io/qplay/en/) / [Portable and all downloads](https://github.com/qbutt-org/qplay/releases/latest) / [What's new](https://github.com/qbutt-org/qplay/releases)
+[Website](https://qbutt-org.github.io/qplay/en/) / [Portable](https://github.com/qbutt-org/qplay/releases/latest/download/qplay-portable.zip) / [What's new](https://github.com/qbutt-org/qplay/releases/latest)
 
 ## Installation
 
@@ -60,4 +60,4 @@ See the [project rules](AGENTS.md).
 
 The bundle includes ModernX, Lua scripts, shaders, and media dependencies with their authors' notices preserved. Licenses are in [licenses/](licenses/), and qplay source terms are in [LICENSE](LICENSE).
 
-Releases publish pinned sources and runtime contents alongside the binaries.
+qplay sources are available in this repository. Complete media engine and dependency sources for version 1.0.0 are published in a [separate technical release](https://github.com/qbutt-org/qplay/releases/tag/v1.0.0-sources).

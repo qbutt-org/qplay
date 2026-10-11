@@ -25,8 +25,10 @@ Write product code, scripts and configuration for the person who will read and m
 
 Use Bun/TypeScript for packaging and integration tooling. Build locally with `bun run build`; never add automatic GitHub build triggers. Do not write unit tests or unsolicited Markdown work reports. Validate legal media fixtures through actual mpv, redirected launcher metadata, process lifetime, settings persistence, fresh/repeated installation and the affected native mouse controls. A successful build is not playback or GPU evidence.
 
-The installer and portable archive must contain complete offline base playback. GPU-specific frame generation may prepare pinned runtime downloads automatically while ordinary playback remains available. Ship exact licenses and complete corresponding source inputs alongside every binary release. Preserve imported license headers and provenance.
+The installer and portable archive must contain complete offline base playback. GPU-specific frame generation may prepare pinned runtime downloads automatically while ordinary playback remains available. Preserve imported license headers and provenance.
 
 ## Delivery
 
 The public repository is `qbutt-org/qplay`, with only `main` published. Review the full outgoing diff and explicitly stage paths. Build and validate final artifacts before publishing. Never publish private history or secrets, and verify actual repository visibility, source revision and uploaded artifact digests.
+
+Product releases upload only `qplay-setup.exe` and `qplay-portable.zip`. GitHub provides qplay source archives at the exact release commit. Publish the complete mpv/dependency source archive in a separate `v<version>-sources` release marked not latest, linked directly from the product release body.

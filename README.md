@@ -10,7 +10,7 @@ qplay — видеоплеер на основе [mpv](https://mpv.io/).
 
 [![Скачать для Windows](docs/assets/download.svg)](https://github.com/qbutt-org/qplay/releases/latest/download/qplay-setup.exe)
 
-[Сайт](https://qbutt-org.github.io/qplay/) / [Portable и все файлы](https://github.com/qbutt-org/qplay/releases/latest) / [Что нового](https://github.com/qbutt-org/qplay/releases)
+[Сайт](https://qbutt-org.github.io/qplay/) / [Portable](https://github.com/qbutt-org/qplay/releases/latest/download/qplay-portable.zip) / [Что нового](https://github.com/qbutt-org/qplay/releases/latest)
 
 ## Установка
 
@@ -60,4 +60,4 @@ bun scripts/build.ts --runtime-archive "C:\build\qbutt-media-runtime-1.3.0.zip" 
 
 Комплект включает ModernX, Lua-скрипты, шейдеры и медиазависимости с сохранёнными уведомлениями авторов. Лицензии находятся в [licenses/](licenses/), а условия исходников qplay — в [LICENSE](LICENSE).
 
-В релизе рядом с бинарными файлами публикуются закреплённые исходники и сведения о составе runtime.
+Исходники qplay доступны в этом репозитории. Полные исходники медиадвижка и его зависимостей для версии 1.0.0 опубликованы в [отдельном техническом релизе](https://github.com/qbutt-org/qplay/releases/tag/v1.0.0-sources).
