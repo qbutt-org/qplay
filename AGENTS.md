@@ -5,11 +5,11 @@ qplay is an independent Windows media player built on mpv. It also supplies the 
 ## Ownership
 
 - `src/` owns the small Windows launcher, file/URL opening, settings, updater and engine lifecycle. Keep mpv as the playback engine rather than duplicating it.
-- `profile/` owns immutable prepared mpv defaults, ModernX, shaders and frame generation. Keep cohesive behavior in its existing Lua modules. Preserve mouse-first controls, live DPI handling, downgrade-only frame generation during a video, TLS validation and the bundled trust store.
+- `profile/` owns immutable prepared mpv defaults, ModernX, subtitle controls, shaders and frame generation. Keep cohesive behavior in its existing Lua modules. Preserve mouse-first controls, live DPI handling, downgrade-only frame generation during a video, TLS validation and the bundled trust store. Explicit subtitle placement must survive OSC visibility changes and reopening playback without replacing authored ASS styles.
 - `upstream-lock.json` pins the imported public runtime, exact dependency hashes and corresponding sources.
 - Installed preferences live in `%APPDATA%/qplay`; state and generated GPU runtimes live in `%LOCALAPPDATA%/qplay`. Portable builds use their own `userdata` directory. Never replace existing mpv/mpv.net profiles or Windows UserChoice.
 - `--version-json` and `--runtime-info-json` are protocol version 1. Runtime metadata verifies the immutable build manifest before returning tool paths and configuration/data directories. Each discovered absolute tool path must run without the caller changing its working directory or PATH. Callers discover qplay through its per-user product registration or App Paths and use this public metadata, never internal engine/profile paths. Standard mpv options pass through, except qplay owns its configuration, installed scripts and engine paths. The launcher remains alive until its engine exits; terminating the launcher must close its owned child processes.
-- qbutt owns its content library/history, AI subtitle translation and verified torrent Range endpoint. qcatch owns capture and standalone downloads. qplay supplies playback and the optional external-download IPC action without duplicating those services.
+- qbutt owns its content library/history, AI subtitle translation and verified torrent Range endpoint. qplay shows translation actions only when the playback session advertises `user-data/qbutt-subtitles`, and sends `qplay-subtitles` actions to qbutt. qcatch owns capture and standalone downloads. qplay supplies playback and the optional external-download IPC action without duplicating those services.
 
 ## Product interface
 

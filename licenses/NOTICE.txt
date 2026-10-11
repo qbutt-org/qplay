@@ -10,6 +10,12 @@ mpv
   The public qbutt 1.3.0 runtime supplies this build with its frozen MSYS2
   CLANG64 dependency closure. qplay retains these exact runtime binaries.
   Copyright and GPL/LGPL texts accompany this notice.
+  The profile retains mpv player/lua/select.lua, player/lua/console.lua and
+  etc/menu.conf from that same revision; their original hashes are recorded under
+  mpv.profileSources in upstream-lock.json and their license headers are preserved.
+  qplay adapts the sole menu producer for live RU/EN labels and its settings and
+  subtitle actions, removes unused OSC menu entries, and measures popup text in
+  rendered pixels. The corresponding built-in scripts are disabled.
   The source archive pinned below preserves the custom build recipe, exact source
   inputs, original MSYS2 PKGBUILDs and patches, package BUILDINFO/PKGINFO, source
   archives, VCS trees and Cargo dependencies for the linked runtime and static
@@ -73,7 +79,7 @@ qplay adaptations and corresponding sources
   variables or machine-local shader benchmark profile are installed.
 
   The unchanged engine's complete corresponding sources and rebuild inputs are:
-  https://github.com/qbutt-org/qbutt/releases/download/v1.3.0/qbutt-1.3.0-media-sources.zip
+  https://github.com/qbutt-org/qplay/releases/download/v1.0.0-sources/qplay-1.0.0-runtime-sources.zip
   Size: 1432941010 bytes
   SHA256: ed37bcf1f833e392ab5c71132e79de7efb27164c1611e0134ed0c6ce08718a4a
   Its BUILDING.txt and manifests describe exact revisions, dependency closure,

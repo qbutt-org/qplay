@@ -32,6 +32,12 @@
   <a href="https://github.com/qbutt-org/qplay/releases/latest/download/qplay-portable.zip">Portable</a>
 </p>
 
+<p align="center">
+  <img src="docs/assets/player-en.png" alt="qplay playing a video with playback controls visible" width="960">
+  <br>
+  <sub>Frame from Sintel. © Blender Foundation / <a href="https://durian.blender.org/">durian.blender.org</a>, <a href="https://creativecommons.org/licenses/by/3.0/">CC BY 3.0</a>.</sub>
+</p>
+
 ## Installation
 
 Run **qplay-setup.exe**. qplay supports Windows 10 version 2004 or later and Windows 11, x64. qplay appears in the Start menu and the Windows apps list.
@@ -42,13 +48,15 @@ Open a media file in qplay, drag it into the window, or paste a direct URL into 
 
 ## Controls and image quality
 
-The bundle includes the ModernX interface: a timeline, volume, track selection, and subtitles. Picture processing settings are available from the player. Upscaling and frame generation use the GPU; available modes and performance depend on the hardware.
+Image processing is available from the FX menu. Upscaling and frame generation use the GPU; available modes and performance depend on the hardware.
 
-Basic playback works offline from the installed bundle. GPU modes may automatically download and prepare additional pinned components.
+Click the subtitle button to select a track or turn subtitles off. Choose **Move subtitles**, drag the position slider handle, then click **Done**. The player remembers the position when you reopen it. **Automatic subtitle position** restores the default placement. Movement is limited for ASS subtitles with authored coordinates.
+
+Basic playback works offline from the installed bundle. GPU modes may automatically download and prepare additional components.
 
 ## qbutt and qcatch
 
-[qbutt](https://github.com/qbutt-org/qbutt) uses qplay for online video and watching torrent files while they download. The qbutt installer installs this same independent player.
+[qbutt](https://github.com/qbutt-org/qbutt) uses qplay for online video and watching torrent files while they download. The qbutt installer installs the same player.
 
 [qcatch](https://github.com/qbutt-org/qcatch) finds video in the browser and opens the selected stream in the installed qplay.
 
@@ -67,7 +75,7 @@ Windows launcher sources are in `src/`; the prepared player profile is in `profi
 The local build uses Bun 1.4.2 and the built-in .NET Framework compiler. The .NET SDK is not required. Release validation used the following command; substitute your paths to the pinned runtime archive and Inno Setup 6.7.3 `ISCC.exe`:
 
 ```powershell
-bun scripts/build.ts --runtime-archive "C:\build\qbutt-media-runtime-1.3.0.zip" --installer-compiler "C:\tools\Inno Setup 6\ISCC.exe"
+bun scripts/build.ts --runtime-archive "C:\build\qplay-1.0.0-runtime.zip" --installer-compiler "C:\tools\Inno Setup 6\ISCC.exe"
 ```
 
 The script verifies the runtime SHA-256 hash and creates the installer and portable archive in `%TEMP%\qplay-build`; use `--output` for another directory. `bun run build` can prepare dependencies automatically, but the Inno Setup bootstrap in that mode has not been validated yet.

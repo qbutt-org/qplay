@@ -10,7 +10,6 @@ namespace QPlay
     {
         private readonly PlayerPaths paths;
         private readonly string ipc;
-        private readonly Preferences preferences;
         private readonly bool russian;
         private readonly Label updateStatus;
         private readonly Button checkUpdate;
@@ -21,7 +20,7 @@ namespace QPlay
         {
             this.paths = paths;
             this.ipc = ipc;
-            preferences = paths.Preferences();
+            var preferences = paths.Preferences();
             russian = preferences.language == "ru";
             Ui.Prepare(this, russian ? "qplay - Настройки" : "qplay - Settings", new Size(500, 386));
             MaximizeBox = false;
@@ -148,10 +147,11 @@ namespace QPlay
             save.Anchor = AnchorStyles.Right;
             save.Margin = new Padding(0, 16, 0, 0);
             save.Click += delegate {
-                preferences.language = language.SelectedIndex == 0 ? "ru" : "en";
-                preferences.resume = resume.Checked;
-                preferences.frameGeneration = framegen.Checked;
-                Json.Save(paths.SettingsFile, preferences);
+                preferences = paths.UpdatePreferences(updated => {
+                    updated.language = language.SelectedIndex == 0 ? "ru" : "en";
+                    updated.resume = resume.Checked;
+                    updated.frameGeneration = framegen.Checked;
+                });
                 Ui.Language = preferences.language;
                 try
                 {

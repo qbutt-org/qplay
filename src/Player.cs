@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -26,6 +27,8 @@ namespace QPlay
             var userConfiguration = Path.Combine(paths.Configuration, "mpv.conf");
             if (File.Exists(userConfiguration))
                 arguments.Add("--include=" + userConfiguration);
+            if (preferences.subtitlePosition.HasValue)
+                arguments.Add("--sub-pos=" + preferences.subtitlePosition.Value.ToString(CultureInfo.InvariantCulture));
             arguments.AddRange(options.Arguments);
             var ipc = options.Arguments.LastOrDefault(argument => argument.StartsWith("--input-ipc-server=", StringComparison.Ordinal));
             if (ipc == null)
@@ -46,6 +49,7 @@ namespace QPlay
             start.EnvironmentVariables["QPLAY_DATA"] = paths.Data;
             start.EnvironmentVariables["QPLAY_FRAMEGEN"] = preferences.frameGeneration ? "yes" : "no";
             start.EnvironmentVariables["QPLAY_LANGUAGE"] = preferences.language;
+            start.EnvironmentVariables["QPLAY_SUBTITLE_POSITION"] = preferences.subtitlePosition.HasValue ? "saved" : "auto";
             start.EnvironmentVariables["PATH"] = Runtime.Directory + ";" + Environment.GetEnvironmentVariable("PATH");
             start.EnvironmentVariables.Remove("VSSCRIPT_PATH");
             using (var job = new EngineJob())

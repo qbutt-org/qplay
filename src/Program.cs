@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -41,7 +42,13 @@ namespace QPlay
                 }
 
                 paths.Create();
-                Ui.Language = paths.Preferences().language;
+                if (options.SaveSubtitlePosition)
+                {
+                    paths.UpdatePreferences(updated => updated.subtitlePosition = options.SubtitlePosition);
+                    return 0;
+                }
+                var preferences = paths.Preferences();
+                Ui.Language = preferences.language;
                 if (options.Settings)
                 {
                     Application.Run(new SettingsForm(paths, options.PlayerIpc));
@@ -88,6 +95,8 @@ namespace QPlay
         internal bool RuntimeInfo;
         internal bool Settings;
         internal bool ExternalDownloads;
+        internal bool SaveSubtitlePosition;
+        internal double? SubtitlePosition;
         internal string ProfileDirectory;
         internal string PlayerIpc;
         internal readonly List<string> Arguments = new List<string>();
@@ -113,6 +122,21 @@ namespace QPlay
                     result.Settings = true;
                 else if (argument == "--external-downloads")
                     result.ExternalDownloads = true;
+                else if (argument.StartsWith("--save-subtitle-position=", StringComparison.Ordinal))
+                {
+                    var value = argument.Substring("--save-subtitle-position=".Length);
+                    result.SaveSubtitlePosition = true;
+                    result.SubtitlePosition = null;
+                    if (value != "auto")
+                    {
+                        double position;
+                        if (!Double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out position)
+                            || Double.IsNaN(position) || Double.IsInfinity(position) || position < 0 || position > 100)
+                            throw new ArgumentException(Ui.Text("Позиция субтитров должна быть от 0 до 100 или auto.",
+                                "Subtitle position must be from 0 to 100 or auto."));
+                        result.SubtitlePosition = position;
+                    }
+                }
                 else if (argument.StartsWith("--profile-dir=", StringComparison.Ordinal))
                     result.ProfileDirectory = argument.Substring(14);
                 else if (argument.StartsWith("--player-ipc=", StringComparison.Ordinal))

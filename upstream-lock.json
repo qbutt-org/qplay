@@ -3,7 +3,24 @@
   "profileSourceRevision": "e6ebc69988dae0705a10bb4c9a3ccacd2f020205",
   "mpv": {
     "version": "0.41.0-gb2c255c13-qbutt",
-    "source": "https://github.com/mpv-player/mpv/tree/b2c255c13e8e37952dbac6c34da56a690560378b"
+    "source": "https://github.com/mpv-player/mpv/tree/b2c255c13e8e37952dbac6c34da56a690560378b",
+    "profileSources": [
+      {
+        "path": "profile/scripts/select.lua",
+        "sourcePath": "player/lua/select.lua",
+        "sha256": "5f95da1a21a03ec45106e7ca6976f11f16eaa66215b09d16254fc615080075a5"
+      },
+      {
+        "path": "profile/scripts/console.lua",
+        "sourcePath": "player/lua/console.lua",
+        "sha256": "1b9b73e24350a1567b057e74b2099894e68636d75040e33133dce9e0b9b9a1c1"
+      },
+      {
+        "path": "profile/menu.conf",
+        "sourcePath": "etc/menu.conf",
+        "sha256": "ec8070a1d56814f238b18e24967f0c0fef6cb81d50036e2c7b5276fe7b6015de"
+      }
+    ]
   },
   "ffmpeg": {
     "version": "9.0.2-6",
@@ -14,7 +31,7 @@
     "source": "https://github.com/yt-dlp/yt-dlp/tree/2026.08.19"
   },
   "runtime": {
-    "url": "https://github.com/qbutt-org/qbutt/releases/download/v1.3.0/qbutt-media-runtime-1.3.0.zip",
+    "url": "https://github.com/qbutt-org/qplay/releases/download/v1.0.0-sources/qplay-1.0.0-runtime.zip",
     "sha256": "dd69bb46843baf25191e65d954beda7506d058e9e0ad809248b5e635b05d50e1",
     "size": 94446930,
     "files": {
@@ -347,7 +364,7 @@
     "bundledPath": "profile/certs/cacert.pem"
   },
   "sourceArchive": {
-    "url": "https://github.com/qbutt-org/qbutt/releases/download/v1.3.0/qbutt-1.3.0-media-sources.zip",
+    "url": "https://github.com/qbutt-org/qplay/releases/download/v1.0.0-sources/qplay-1.0.0-runtime-sources.zip",
     "sha256": "ed37bcf1f833e392ab5c71132e79de7efb27164c1611e0134ed0c6ce08718a4a",
     "size": 1432941010
   },

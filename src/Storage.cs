@@ -1,6 +1,8 @@
 using System;
 using System.IO;
+using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 using System.Web.Script.Serialization;
 
 namespace QPlay
@@ -76,6 +78,37 @@ namespace QPlay
             Directory.CreateDirectory(Path.Combine(Data, "framegen"));
         }
 
+        internal Preferences UpdatePreferences(Action<Preferences> update)
+        {
+            string identity;
+            using (var hash = SHA256.Create())
+                identity = BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(
+                    Path.GetFullPath(SettingsFile).ToUpperInvariant()))).Replace("-", "");
+
+            using (var mutex = new Mutex(false, @"Local\qplay-preferences-" + identity))
+            {
+                try
+                {
+                    mutex.WaitOne();
+                }
+                catch (AbandonedMutexException)
+                {
+                    // An abandoned mutex has already been acquired by this thread.
+                }
+                try
+                {
+                    var preferences = Preferences();
+                    update(preferences);
+                    Json.Save(SettingsFile, preferences);
+                    return preferences;
+                }
+                finally
+                {
+                    mutex.ReleaseMutex();
+                }
+            }
+        }
+
         internal Preferences Preferences()
         {
             return File.Exists(SettingsFile) ? Json.Read<Preferences>(SettingsFile) : new Preferences();
@@ -87,6 +120,7 @@ namespace QPlay
         public string language { get; set; }
         public bool resume { get; set; }
         public bool frameGeneration { get; set; }
+        public double? subtitlePosition { get; set; }
 
         public Preferences()
         {

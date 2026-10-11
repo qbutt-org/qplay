@@ -148,6 +148,13 @@ h1 {
   border-radius: 10px;
 }
 
+.preview figcaption {
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .details {
   max-width: 760px;
   margin-top: 72px;

@@ -77,6 +77,7 @@ local modernx_layout = load_mod("layout")
 local shader_menu = load_mod("shader_menu")
 local modernx_i18n = load_mod("i18n")
 local modernx_tooltip = load_mod("tooltip")
+local subtitle_menu = load_mod("subtitles")
 
 -- ====================
 -- Parameters
@@ -765,6 +766,18 @@ end
 local function request_init()
     state.initREQ = true
     request_tick()
+end
+
+local function open_subtitles()
+    subtitle_menu.open({
+        request_tick = request_tick,
+        mouse_position = function()
+            local sx, sy = get_virt_scale_factor()
+            local x, y = mp.get_mouse_pos()
+            return x * sx, y * sy
+        end,
+        adjust_subtitles = adjust_subtitles,
+    })
 end
 
 -- Like request_init(), but also request an immediate update
@@ -1650,18 +1663,20 @@ function check_title()
             end
         end
 
-        if (user_opts.show_file_size) then
+        local file_format = mp.get_property("file-format")
+        -- Multipart demuxers report the manifest size, not the media size.
+        if user_opts.show_file_size and file_format ~= "hls" and file_format ~= "dash"
+            and file_format ~= "edl" and file_format ~= "concat" then
             local file_size = mp.get_property_native("file-size")
-            local resinfo = ""
             if (file_size ~= nil) then
                 file_size = mp.utils.format_bytes_humanized(file_size)
                 if (state.localDescription == nil) then -- only metadata
-                    state.localDescription = texts.size .. ": " .. file_size .. " " .. resinfo
+                    state.localDescription = texts.size .. ": " .. file_size
                     state.localDescriptionClick = state.localDescriptionClick .. state.localDescription
                     state.localDescriptionIsClickable = true
                 else
                     state.localDescriptionClick = state.localDescriptionClick ..
-                        "\\N" .. texts.size .. ": " .. file_size .. " " .. resinfo
+                        "\\N" .. texts.size .. ": " .. file_size
                 end
             end
         end
@@ -1774,11 +1789,6 @@ function check_path_url()
 
         if user_opts.show_description then
             if not state.is_youtube then
-                local file_size = mp.get_property_native("file-size")
-                if file_size then
-                    file_size = mp.utils.format_bytes_humanized(file_size)
-                    state.videoDescription = texts.size .. ": " .. file_size
-                end
                 state.descriptionLoaded = true
                 return
             end
@@ -2689,7 +2699,7 @@ layouts["original"] = function()
     geo = {
         x = 25,
         y = refY - 117 +
-            (((state.localDescription ~= nil or state.is_URL) and user_opts.show_description) and -20 or 0) +
+            (((state.localDescription ~= nil or (state.is_URL and state.is_youtube)) and user_opts.show_description) and -20 or 0) +
             (user_opts.seekbar_between_timers and 25 or 0),
         an = 1,
         w = osc_geo.w - 50,
@@ -2703,7 +2713,7 @@ layouts["original"] = function()
     -- lo.button.maxchars = geo.w / 11
 
     -- Description
-    if (state.localDescription ~= nil or state.is_URL) and user_opts.show_description then
+    if (state.localDescription ~= nil or (state.is_URL and state.is_youtube)) and user_opts.show_description then
         geo = { x = 25, y = refY - 117 + (user_opts.seekbar_between_timers and 25 or 0), an = 1, w = osc_geo.w - 50, h = 19 }
         lo = add_layout("description")
         lo.geometry = geo
@@ -2960,7 +2970,7 @@ layouts["reduced"] = function()
     lo.button.maxchars = geo.w / 5
 
     -- Description
-    if (state.localDescription ~= nil or state.is_URL) and user_opts.show_description then
+    if (state.localDescription ~= nil or (state.is_URL and state.is_youtube)) and user_opts.show_description then
         geo = { x = osc_geo.w - 25, y = refY - 115, an = 9, w = 120, h = 19 }
         lo = add_layout("description")
         lo.geometry = geo
@@ -3218,8 +3228,9 @@ local function osc_init()
     ne = new_element('description', 'button')
     ne.visible = (state.localDescription ~= nil or (state.is_URL and state.is_youtube)) and user_opts.show_description
     ne.content = function()
-        if #state.videoDescription > 25 and user_opts.layout_option == "reduced" then
-            return "View description"
+        local description = state.is_URL and state.is_youtube and state.videoDescription or state.localDescription or ""
+        if #description > 25 and user_opts.layout_option == "reduced" then
+            return texts.description
         end
 
         if state.is_URL and state.is_youtube then
@@ -3487,7 +3498,7 @@ local function osc_init()
 
     -- subtitles
     ne = new_element('cy_sub', 'button')
-    ne.enabled = #tracks_osc.sub > 0
+    ne.enabled = #tracks_osc.sub > 0 or subtitle_menu.has_session()
     ne.off = get_track('sub') == 0
     ne.visible = (osc_param.playresx >= 600 - outeroffset)
     ne.content = icons.subtitle
@@ -3508,21 +3519,14 @@ local function osc_init()
                 message = message .. " " .. title
             end
         end
-        return message
+        local status = subtitle_menu.status()
+        return message .. (status ~= "" and "\n" .. status or "")
     end
     ne.nothingavailable = texts.nosub
     ne.eventresponder['mbtn_left_up'] =
-        function()
-            mp.set_property_number("secondary-sid", 0)
-            set_track('sub', 1)
-            show_message(get_tracklist("sub"))
-        end
+        open_subtitles
     ne.eventresponder['enter'] =
-        function()
-            mp.set_property_number("secondary-sid", 0)
-            set_track('sub', 1)
-            show_message(get_tracklist('sub'))
-        end
+        open_subtitles
     ne.eventresponder['mbtn_right_up'] =
         function()
             mp.set_property_number("secondary-sid", 0)
@@ -3542,9 +3546,7 @@ local function osc_init()
             show_message(get_tracklist('sub'))
         end
     ne.eventresponder['shift+mbtn_left_down'] =
-        function()
-            mp.commandv("script-binding", "select/select-sid")
-        end
+        open_subtitles
     ne.eventresponder['shift+mbtn_right_down'] =
         function()
             mp.set_property_number("secondary-sid", 0)
@@ -4085,6 +4087,9 @@ function osc_visible(visible)
 end
 
 function adjust_subtitles(visible)
+    if subtitle_menu.has_position() or subtitle_menu.is_moving() then
+        return
+    end
     if visible and user_opts.raise_subtitles and state.osc_visible == true and (state.fullscreen == false or user_opts.show_fullscreen) then
         local _, h = mp.get_osd_size()
         if h > 0 then
@@ -4271,7 +4276,7 @@ local function render()
         end
     end
 
-    if state.shader_preset_menu_open then
+    if state.shader_preset_menu_open or subtitle_menu.is_moving() then
         mouse_over_osc = true
     end
 
@@ -4318,6 +4323,12 @@ local function render()
     if state.persistent_progresstoggle then
         render_persistent_progressbar(ass)
     end
+
+    subtitle_menu.draw(ass, {
+        width = osc_param.playresx,
+        height = osc_param.playresy,
+        set_mouse_area = set_virt_mouse_area,
+    })
 
     -- submit
     set_osd(osc_param.playresy * osc_param.display_aspect, osc_param.playresy, ass.text)
@@ -4386,6 +4397,7 @@ function process_event(source, what)
                 local top_hover = window_controls_enabled() and (user_opts.window_title or user_opts.window_top_bar)
                 local mouse_over_input = state.osc_visible and (
                     state.shader_preset_menu_open or
+                    subtitle_menu.is_moving() or
                     mouse_hit_area('input') or mouse_hit_area(shader_menu.area_name)
                 )
                 if mouseY > osc_param.playresy - (user_opts.bottom_hover_zone or 200) or
@@ -4488,6 +4500,7 @@ end
 mp.register_event('start-file', newfilereset)
 mp.register_event("file-loaded", startupevents)
 mp.observe_property('track-list', nil, request_init)
+mp.observe_property('user-data/qbutt-subtitles', 'native', request_init)
 mp.observe_property('playlist', nil, request_init)
 mp.observe_property("chapter-list", "native", function(_, list) -- chapter list changes
     list = list or {}                                           -- safety, shouldn't return nil
@@ -4551,9 +4564,7 @@ if user_opts.key_bindings then
         show_message(get_tracklist("sub"))
     end);
 
-    mp.add_key_binding("C", "selectsubtitletrack", function()
-        mp.commandv("script-binding", "select/select-sid")
-    end);
+    mp.add_key_binding("C", "selectsubtitletrack", open_subtitles);
 
     if user_opts.persistent_progress_toggle then
         mp.add_key_binding("b", "persistenttoggle", function()
@@ -4749,6 +4760,8 @@ mp.observe_property("user-data/qplay-language", "native", function()
     end
     request_init()
 end)
+
+mp.add_key_binding(nil, "subtitle-menu", open_subtitles)
 
 mp.register_script_message("thumbfast-info", function(json)
     local data = mp.utils.parse_json(json)
