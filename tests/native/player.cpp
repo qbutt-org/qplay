@@ -581,6 +581,17 @@ int main(int argc, char *argv[])
                     && restored.framegenChoice() == QStringLiteral("off"),
                     "Manual GPU choices were not saved together");
                 evidence[QStringLiteral("manualGpuChoicesPersisted")] = true;
+                backend.changeFramegen(QStringLiteral("on"));
+                require(backend.shaderChoice() == QStringLiteral("fsr")
+                    && backend.framegenChoice() == QStringLiteral("on"),
+                    "Manual frame generation did not select compatible FSR");
+                backend.openMedia(media);
+                wait([&] { return backend.mediaLoaded(); }, "Frame generation did not reopen after manual shader");
+                waitGpu([&] { return backend.framegenStatus() == QStringLiteral("active"); },
+                    2 * 60 * 1000, "Frame generation did not resume after manual Anime4K");
+                evidence[QStringLiteral("framegenRestoredAfterManualShader")] = true;
+                backend.stop();
+                wait([&] { return !backend.mediaLoaded(); }, "Stopping restored frame generation failed");
             }
             root.reset();
             gl.makeCurrent(&surface);

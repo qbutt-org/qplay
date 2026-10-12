@@ -838,7 +838,16 @@ impl ffi::PlayerController {
         let Some(choice) = FramegenChoice::from_id(&choice.to_string()) else {
             return;
         };
-        self.as_mut().rust_mut().gpu.framegen_choice = choice;
+        let gpu = &mut self.as_mut().rust_mut().gpu;
+        if matches!(gpu.shader_choice, ShaderChoice::Manual(preset) if preset != ShaderPreset::Fsr)
+        {
+            gpu.shader_choice = match choice {
+                FramegenChoice::On => ShaderChoice::Manual(ShaderPreset::Fsr),
+                FramegenChoice::Auto => ShaderChoice::Auto,
+                FramegenChoice::Off => gpu.shader_choice,
+            };
+        }
+        gpu.framegen_choice = choice;
         self.as_mut().save_preferences();
         if self.media_loaded() {
             self.as_mut().begin_gpu_probe();
