@@ -5,6 +5,7 @@ use cxx_qt_lib::QString;
 
 use super::ffi;
 use crate::session::media_path;
+use crate::yt_dlp::is_youtube_url;
 
 impl ffi::PlayerController {
     pub(super) fn dispatch(mut self: Pin<&mut Self>, arguments: &[&str]) {
@@ -30,6 +31,9 @@ impl ffi::PlayerController {
         let Some(media) = self.media.clone() else {
             return;
         };
+        if is_youtube_url(&media) && !self.online_ready {
+            return;
+        }
         self.as_mut().rust_mut().state = ffi::State::Loading;
         self.as_mut().dispatch(&["loadfile", &media, "replace"]);
         self.as_mut().state_changed();
@@ -39,9 +43,11 @@ impl ffi::PlayerController {
         match media_path(&media.to_string()) {
             Ok(media) => {
                 self.as_mut().cancel_gpu();
+                let waiting = is_youtube_url(&media) && !self.online_ready;
                 let mut state = self.as_mut().rust_mut();
                 state.gpu.interlaced_seen = false;
                 state.media = Some(media);
+                state.online_progress = -1;
                 state.file_loaded = false;
                 state.pending_commands.clear();
                 state.observed_path.clear();
@@ -51,7 +57,16 @@ impl ffi::PlayerController {
                 state.error_text = QString::default();
                 state.audio_tracks.pin_mut().update(Vec::new());
                 state.subtitle_tracks.pin_mut().update(Vec::new());
-                self.as_mut().load_pending_media();
+                if waiting {
+                    self.as_mut().rust_mut().state = ffi::State::Loading;
+                    if let Some(error) = self.online_error.clone() {
+                        self.as_mut().fail(error);
+                    } else {
+                        self.as_mut().state_changed();
+                    }
+                } else {
+                    self.as_mut().load_pending_media();
+                }
             }
             Err(error) => self.as_mut().fail(error),
         }

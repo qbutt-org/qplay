@@ -87,10 +87,23 @@ Item {
         }
     }
 
-    BusyIndicator {
+    Column {
         anchors.centerIn: parent
-        running: root.backend.state === Playback.Starting || root.backend.state === Playback.Loading
-        visible: running
+        spacing: 12
+        visible: root.backend.state === Playback.Starting || root.backend.state === Playback.Loading
+
+        BusyIndicator {
+            anchors.horizontalCenter: parent.horizontalCenter
+            running: parent.visible
+        }
+
+        Label {
+            anchors.horizontalCenter: parent.horizontalCenter
+            visible: root.backend.onlineWaiting && root.backend.onlineProgress >= 0
+            text: (root.russian ? qsTr("Подготовка YouTube %1%") : qsTr("Preparing YouTube %1%"))
+                  .arg(root.backend.onlineProgress)
+            color: "#edf3fa"
+        }
     }
 
     Column {

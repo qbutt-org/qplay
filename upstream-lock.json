@@ -30,6 +30,14 @@
     "version": "2026.08.19",
     "source": "https://github.com/yt-dlp/yt-dlp/tree/2026.08.19"
   },
+  "deno": {
+    "version": "2.9.7",
+    "source": "https://github.com/denoland/deno/tree/v2.9.7",
+    "url": "https://github.com/denoland/deno/releases/download/v2.9.7/deno-x86_64-pc-windows-msvc.zip",
+    "sha256": "a0c3101b4158d1dfb7d6a78a7bf0f3de80c96bb423c152beec8beb22786f2238",
+    "size": 42630221,
+    "executableSha256": "e020f3e232bd16e33768dee528e5983349c962952051ced0a5d58ad42f5d9b33"
+  },
   "runtime": {
     "url": "https://github.com/qbutt-org/qplay/releases/download/v1.0.0-sources/qplay-1.0.0-runtime.zip",
     "sha256": "dd69bb46843baf25191e65d954beda7506d058e9e0ad809248b5e635b05d50e1",

@@ -69,6 +69,7 @@ impl Session {
         library: &Path,
         profile: &Path,
         audio_delay: f64,
+        ytdl_path: &Path,
         wakeup: Box<Wakeup>,
     ) -> Result<Arc<Self>, String> {
         let api = Api::load(library)?;
@@ -90,6 +91,11 @@ impl Session {
             .ok_or("The mpv library needs an engine directory.")?
             .join("profile/certs/cacert.pem");
         let audio_delay = audio_delay.to_string();
+        let ytdl_path = ytdl_path
+            .to_string_lossy()
+            .replace('\\', "/")
+            .replace(',', "\\,");
+        let ytdl_option = format!("ytdl_hook-ytdl_path={ytdl_path}");
         for (name, value) in [
             ("config", "no"),
             ("vo", "libmpv"),
@@ -100,7 +106,8 @@ impl Session {
             ("load-scripts", "no"),
             ("load-console", "no"),
             ("load-select", "no"),
-            ("ytdl", "no"),
+            ("ytdl", "yes"),
+            ("script-opts", ytdl_option.as_str()),
             ("hwdec", "auto"),
             ("tls-verify", "yes"),
             ("resume-playback", "yes"),
