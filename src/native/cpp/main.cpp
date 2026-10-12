@@ -29,27 +29,34 @@ int main(int argc, char *argv[])
 
     QString media;
     QString profile;
+    QStringList playbackArguments;
     bool versionJson = false;
     bool runtimeInfoJson = false;
+    bool positional = false;
     const QStringList arguments = app.arguments();
     for (int i = 1; i < arguments.size(); ++i)
     {
         const QString &argument = arguments.at(i);
-        if (argument.startsWith(QStringLiteral("--profile-dir=")))
+        if (!positional && argument == QStringLiteral("--"))
+            positional = true;
+        else if (!positional && argument.startsWith(QStringLiteral("--profile-dir=")))
             profile = argument.sliced(14);
-        else if (argument == QStringLiteral("--version-json"))
+        else if (!positional && argument == QStringLiteral("--version-json"))
             versionJson = true;
-        else if (argument == QStringLiteral("--runtime-info-json"))
+        else if (!positional && argument == QStringLiteral("--runtime-info-json"))
             runtimeInfoJson = true;
-        else if (argument.startsWith(u'-') || !media.isEmpty())
+        else if (!positional && argument.startsWith(u'-'))
+            playbackArguments.append(argument);
+        else if (!media.isEmpty())
         {
-            std::fprintf(stderr, "Expected at most one media file and optional --profile-dir.\n");
+            std::fprintf(stderr, "Expected at most one media source.\n");
             return 2;
         }
         else
             media = argument;
     }
-    if ((versionJson && runtimeInfoJson) || ((versionJson || runtimeInfoJson) && !media.isEmpty()))
+    if ((versionJson && runtimeInfoJson) || ((versionJson || runtimeInfoJson)
+        && (!media.isEmpty() || !playbackArguments.isEmpty())))
     {
         std::fprintf(stderr, "Metadata query cannot include media or another query.\n");
         return 2;
@@ -108,7 +115,15 @@ int main(int argc, char *argv[])
     int result;
     {
         Qplay::PlayerController backend;
+        const QString launchError = backend.configureLaunch(playbackArguments);
+        if (!launchError.isEmpty())
+        {
+            std::fprintf(stderr, "%s\n", launchError.toUtf8().constData());
+            return 2;
+        }
         backend.configure(configuration + QStringLiteral("/preferences.json"), QLocale::system().name());
+        QObject::connect(&backend, &Qplay::PlayerController::shutdownRequested,
+            &app, [&app] { app.quit(); });
         QQmlApplicationEngine engine;
         QStringList startupWarnings;
         QObject::connect(&engine, &QQmlEngine::warnings, &engine,

@@ -32,10 +32,6 @@ public:
             m_lease.emplace(Qplay::acquire_render_lease(*backend));
             m_generation = (*m_lease)->render_generation();
             (*m_lease)->initialize_render(reinterpret_cast<std::size_t>(&resolveOpenGL));
-            QMetaObject::invokeMethod(backend, [backend, generation = m_generation]
-            {
-                backend->surfaceReady(generation);
-            }, Qt::QueuedConnection);
         }
         catch (const std::exception &error)
         {

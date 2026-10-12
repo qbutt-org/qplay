@@ -6,8 +6,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use cxx::UniquePtr;
 use cxx_qt::CxxQtType;
-use cxx_qt_lib::QString;
+use cxx_qt_lib::{QString, QStringList};
 
+use crate::launch::LaunchOptions;
 use crate::preferences::Preferences;
 use crate::session::{RenderLease, RetiredSession, Session};
 use crate::track_model;
@@ -49,6 +50,8 @@ pub mod ffi {
     unsafe extern "C++" {
         include!("cxx-qt-lib/qstring.h");
         type QString = cxx_qt_lib::QString;
+        include!("cxx-qt-lib/qstringlist.h");
+        type QStringList = cxx_qt_lib::QStringList;
     }
 
     unsafe extern "C++" {
@@ -163,6 +166,8 @@ pub mod ffi {
         fn subtitle_tracks_model(&self) -> *mut TrackModel;
 
         fn configure(self: Pin<&mut Self>, path: &QString, system_language: &QString);
+        #[cxx_name = "configureLaunch"]
+        fn configure_launch(self: Pin<&mut Self>, arguments: &QStringList) -> QString;
         fn initialize(self: Pin<&mut Self>, library: &QString, profile: &QString);
         #[cxx_name = "setDisplayRate"]
         fn set_display_rate(self: Pin<&mut Self>, fps: f64);
@@ -218,8 +223,6 @@ pub mod ffi {
         #[qinvokable]
         fn stop(self: Pin<&mut Self>);
 
-        #[rust_name = "surface_ready"]
-        fn surfaceReady(self: Pin<&mut Self>, generation: u64);
         #[rust_name = "surface_failed"]
         fn surfaceFailed(self: Pin<&mut Self>, generation: u64, error: &QString);
         #[qsignal]
@@ -228,6 +231,9 @@ pub mod ffi {
         #[qsignal]
         #[cxx_name = "frameReady"]
         fn frame_ready(self: Pin<&mut Self>);
+        #[qsignal]
+        #[cxx_name = "shutdownRequested"]
+        fn shutdown_requested(self: Pin<&mut Self>);
     }
 
     impl cxx_qt::Threading for PlayerController {}
@@ -243,13 +249,13 @@ fn runtime_info_json(library: &str, data: &str, config: &str) -> Result<String, 
 
 pub struct PlayerControllerRust {
     session: Option<Arc<Session>>,
+    launch: LaunchOptions,
     startup_cancel: Option<Arc<AtomicBool>>,
     online_command: Option<u64>,
     online_ready: bool,
     online_progress: i32,
     online_error: Option<String>,
     generation: u64,
-    surface_ready: bool,
     media: Option<String>,
     observed_path: String,
     pending_commands: HashSet<u64>,
@@ -283,13 +289,13 @@ impl Default for PlayerControllerRust {
     fn default() -> Self {
         Self {
             session: None,
+            launch: LaunchOptions::default(),
             startup_cancel: None,
             online_command: None,
             online_ready: false,
             online_progress: -1,
             online_error: None,
             generation: 0,
-            surface_ready: false,
             media: None,
             observed_path: String::new(),
             pending_commands: HashSet::new(),
@@ -331,6 +337,17 @@ impl Drop for PlayerControllerRust {
 }
 
 impl ffi::PlayerController {
+    fn configure_launch(mut self: Pin<&mut Self>, arguments: &QStringList) -> QString {
+        let arguments: Vec<String> = arguments.iter().map(QString::to_string).collect();
+        match LaunchOptions::parse(&arguments) {
+            Ok(launch) => {
+                self.as_mut().rust_mut().launch = launch;
+                QString::default()
+            }
+            Err(error) => QString::from(error),
+        }
+    }
+
     fn state(&self) -> ffi::State {
         self.state
     }

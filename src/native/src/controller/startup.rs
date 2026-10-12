@@ -8,6 +8,7 @@ use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::QString;
 
 use super::ffi;
+use crate::launch::LaunchOptions;
 use crate::session::Session;
 use crate::yt_dlp::YtDlp;
 
@@ -26,6 +27,7 @@ pub struct StartTask {
     library: PathBuf,
     profile: PathBuf,
     audio_delay: f64,
+    launch: LaunchOptions,
     wakeup: Box<Wakeup>,
     cancel: Arc<AtomicBool>,
 }
@@ -42,17 +44,25 @@ pub fn run_start_task(task: Box<StartTask>) {
     let thread = task.wakeup.thread.clone();
     let generation = task.wakeup.generation;
     let tools = YtDlp::new(&task.library, &task.profile);
-    let initial_path = tools
-        .as_ref()
-        .ok()
-        .and_then(|tools| tools.select().ok().flatten())
-        .map(|executable| executable.path)
+    let initial_path = task
+        .launch
+        .ytdl_path
+        .as_deref()
+        .map(PathBuf::from)
+        .or_else(|| {
+            tools
+                .as_ref()
+                .ok()
+                .and_then(|tools| tools.select().ok().flatten())
+                .map(|executable| executable.path)
+        })
         .unwrap_or_else(|| task.library.clone());
     let result = Session::create(
         &task.library,
         &task.profile,
         task.audio_delay,
         &initial_path,
+        &task.launch,
         task.wakeup,
     );
     let started = result.is_ok();
@@ -66,9 +76,11 @@ pub fn run_start_task(task: Box<StartTask>) {
         }
         match result {
             Ok(session) => {
+                let external_ytdl = player.launch.ytdl_path.is_some();
                 let mut state = player.as_mut().rust_mut();
                 state.session = Some(session);
                 state.engine_ready = true;
+                state.online_ready = external_ytdl;
                 state.state = ffi::State::Stopped;
                 if (player.applied_audio_delay() - player.audio_delay).abs() > 0.000_001 {
                     let delay = player.audio_delay;
@@ -77,6 +89,7 @@ pub fn run_start_task(task: Box<StartTask>) {
                         .dispatch(&["set", "audio-delay", &delay.to_string()]);
                 }
                 player.as_mut().drain_events();
+                player.as_mut().load_pending_media();
                 player.as_mut().state_changed();
             }
             Err(error) => {
@@ -86,6 +99,9 @@ pub fn run_start_task(task: Box<StartTask>) {
         }
     });
     if !started {
+        return;
+    }
+    if task.launch.ytdl_path.is_some() {
         return;
     }
 
@@ -224,7 +240,6 @@ impl ffi::PlayerController {
         state.online_progress = -1;
         state.online_error = None;
         state.engine_ready = false;
-        state.surface_ready = false;
         state.file_loaded = false;
         state.pending_commands.clear();
         state.gpu_commands.clear();
@@ -240,6 +255,7 @@ impl ffi::PlayerController {
             library: library_path,
             profile: PathBuf::from(profile.to_string()),
             audio_delay: state.audio_delay,
+            launch: state.launch.clone(),
             cancel,
             wakeup: Box::new(Wakeup {
                 thread,
@@ -249,14 +265,6 @@ impl ffi::PlayerController {
         };
         ffi::start_session(Box::new(task));
         self.as_mut().state_changed();
-    }
-
-    pub(super) fn surface_ready(mut self: Pin<&mut Self>, generation: u64) {
-        if self.generation != generation || self.surface_ready {
-            return;
-        }
-        self.as_mut().rust_mut().surface_ready = true;
-        self.as_mut().load_pending_media();
     }
 
     pub(crate) fn surface_failed(mut self: Pin<&mut Self>, generation: u64, error: &QString) {

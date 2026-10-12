@@ -5,6 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::controller::{FrameWakeup, Wakeup, ffi};
+use crate::launch::LaunchOptions;
 use crate::mpv::{self, Api, Handle, OpenGlFbo, OpenGlInit, RenderParam};
 
 pub enum PropertyValue {
@@ -70,6 +71,7 @@ impl Session {
         profile: &Path,
         audio_delay: f64,
         ytdl_path: &Path,
+        launch: &LaunchOptions,
         wakeup: Box<Wakeup>,
     ) -> Result<Arc<Self>, String> {
         let api = Api::load(library)?;
@@ -91,11 +93,6 @@ impl Session {
             .ok_or("The mpv library needs an engine directory.")?
             .join("profile/certs/cacert.pem");
         let audio_delay = audio_delay.to_string();
-        let ytdl_path = ytdl_path
-            .to_string_lossy()
-            .replace('\\', "/")
-            .replace(',', "\\,");
-        let ytdl_option = format!("ytdl_hook-ytdl_path={ytdl_path}");
         for (name, value) in [
             ("config", "no"),
             ("vo", "libmpv"),
@@ -107,7 +104,6 @@ impl Session {
             ("load-console", "no"),
             ("load-select", "no"),
             ("ytdl", "yes"),
-            ("script-opts", ytdl_option.as_str()),
             ("hwdec", "auto"),
             ("tls-verify", "yes"),
             ("resume-playback", "yes"),
@@ -121,6 +117,13 @@ impl Session {
             let name = CString::new(name).map_err(|error| error.to_string())?;
             let value = CString::new(value).map_err(|error| error.to_string())?;
             // SAFETY: Strings are terminated and borrowed for this synchronous setup call.
+            raw.api
+                .check(unsafe { (raw.api.option)(handle, name.as_ptr(), value.as_ptr()) })
+                .map_err(|error| format!("Set mpv option {}: {error}", name.to_string_lossy()))?;
+        }
+        for (name, value) in launch.mpv_options(ytdl_path) {
+            let name = CString::new(name).map_err(|error| error.to_string())?;
+            let value = CString::new(value).map_err(|error| error.to_string())?;
             raw.api
                 .check(unsafe { (raw.api.option)(handle, name.as_ptr(), value.as_ptr()) })
                 .map_err(|error| format!("Set mpv option {}: {error}", name.to_string_lossy()))?;

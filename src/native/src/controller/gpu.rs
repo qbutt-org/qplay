@@ -434,7 +434,7 @@ impl ffi::PlayerController {
             full_range: session.text("video-params/colorlevels").as_deref() == Some("full"),
             framegen_choice: self.gpu.framegen_choice,
             shader_choice: self.gpu.shader_choice,
-            content_choice: self.gpu.content_choice,
+            content_choice: self.launch.content.unwrap_or(self.gpu.content_choice),
             engine_root,
             runtime_root,
         };
@@ -514,7 +514,11 @@ impl ffi::PlayerController {
         let width = session.number("video-params/w").unwrap_or(0.0) as u32;
         let height = session.number("video-params/h").unwrap_or(0.0) as u32;
         let has_video = session.text("vid").is_some_and(|vid| vid != "no");
-        let kind = gpu.content_choice.effective(gpu.detected);
+        let kind = self
+            .launch
+            .content
+            .unwrap_or(gpu.content_choice)
+            .effective(gpu.detected);
         let hardware = gpu.hardware.as_ref();
         let choice = shaders::choose_preset(
             gpu.shader_choice,

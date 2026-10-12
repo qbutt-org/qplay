@@ -24,13 +24,23 @@ impl ffi::PlayerController {
                     self.as_mut().rust_mut().file_loaded = false;
                 }
                 Event::FileLoaded => {
+                    if self.launch.ipc {
+                        if let Some(path) = session.text("path") {
+                            self.as_mut().rust_mut().media = Some(path.clone());
+                            self.as_mut().rust_mut().observed_path = path;
+                        }
+                    }
                     self.as_mut().rust_mut().file_loaded = true;
                     self.as_mut().begin_gpu_probe();
                 }
                 Event::EndFile(error) => {
                     self.as_mut().rust_mut().file_loaded = false;
-                    if error < 0 && self.media.as_ref() == Some(&self.observed_path) {
+                    if error < 0
+                        && (self.launch.ipc || self.media.as_ref() == Some(&self.observed_path))
+                    {
                         self.as_mut().fail(session.error(error));
+                    } else if self.state != ffi::State::Failed {
+                        self.as_mut().rust_mut().state = ffi::State::Stopped;
                     }
                 }
                 Event::Command(id, error) => {
@@ -67,6 +77,7 @@ impl ffi::PlayerController {
                     state.file_loaded = false;
                     state.session = None;
                     state.state = ffi::State::Stopped;
+                    self.as_mut().shutdown_requested();
                 }
                 _ => {}
             }

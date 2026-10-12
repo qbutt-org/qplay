@@ -1,5 +1,6 @@
 mod controller;
 mod gpu;
+mod launch;
 mod mpv;
 mod preferences;
 mod runtime_info;
