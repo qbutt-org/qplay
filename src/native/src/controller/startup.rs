@@ -113,6 +113,7 @@ impl ffi::PlayerController {
         if let Some(cancel) = &self.startup_cancel {
             cancel.store(true, Ordering::Release);
         }
+        self.as_mut().cancel_gpu();
 
         let cancel = Arc::new(AtomicBool::new(false));
         let thread = self.qt_thread();
@@ -124,11 +125,16 @@ impl ffi::PlayerController {
         state.surface_ready = false;
         state.file_loaded = false;
         state.pending_commands.clear();
+        state.gpu_commands.clear();
+        state.gpu.interlaced_seen = false;
+        let library_path = PathBuf::from(library.to_string());
+        state.gpu.engine_root = library_path.parent().map(PathBuf::from);
+        state.gpu.player_data = Some(PathBuf::from(profile.to_string()));
         state.state = ffi::State::Starting;
         state.error_text = QString::default();
 
         let task = StartTask {
-            library: PathBuf::from(library.to_string()),
+            library: library_path,
             profile: PathBuf::from(profile.to_string()),
             audio_delay: state.audio_delay,
             cancel,

@@ -1,58 +1,18 @@
 use std::collections::HashMap;
 use std::fmt::Write;
-use std::io::Read;
-use std::os::windows::io::AsRawHandle;
-use std::os::windows::process::CommandExt;
 use std::path::Path;
-use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::sync::atomic::AtomicBool;
+use std::time::Duration;
 
 use serde::Deserialize;
-use windows::Win32::Foundation::{CloseHandle, HANDLE};
-use windows::Win32::System::JobObjects::{
-    AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-    SetInformationJobObject,
-};
-use windows::core::PCWSTR;
 
 use super::content::{Classification, StyleMetrics, classify};
+use super::process::run_bounded;
 
 const SAMPLE_FRACTIONS: [f64; 6] = [0.12, 0.27, 0.42, 0.57, 0.72, 0.87];
 const SAMPLE_FRAMES: usize = 12;
 const STYLE_FRAMES: [usize; 3] = [0, 4, 8];
 const MAX_OUTPUT_BYTES: u64 = 8 * 1024 * 1024;
-
-struct ProbeJob(HANDLE);
-
-impl ProbeJob {
-    fn attach(child: &std::process::Child) -> Result<Self, String> {
-        let handle = unsafe { CreateJobObjectW(None, PCWSTR::null()) }
-            .map_err(|error| format!("Own video probe process: {error}"))?;
-        let job = Self(handle);
-        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        unsafe {
-            SetInformationJobObject(
-                handle,
-                JobObjectExtendedLimitInformation,
-                (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
-                size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-            )
-        }
-        .map_err(|error| format!("Limit video probe lifetime: {error}"))?;
-        unsafe { AssignProcessToJobObject(handle, HANDLE(child.as_raw_handle())) }
-            .map_err(|error| format!("Attach video probe process: {error}"))?;
-        Ok(job)
-    }
-}
-
-impl Drop for ProbeJob {
-    fn drop(&mut self) {
-        let _ = unsafe { CloseHandle(self.0) };
-    }
-}
 
 #[derive(Deserialize)]
 struct ProbeDocument {
@@ -184,7 +144,7 @@ pub fn classify_file(
         return Err("A local video and bundled FFprobe are required for style analysis.".into());
     }
     let graph = filtergraph(video, duration, video_stream)?;
-    let bytes = run_ffprobe(
+    let bytes = run_bounded(
         ffprobe,
         &[
             "-v",
@@ -201,75 +161,10 @@ pub fn classify_file(
         ],
         cancel,
         Duration::from_secs(8),
+        MAX_OUTPUT_BYTES,
+        None,
     )?;
     let document: ProbeDocument = serde_json::from_slice(&bytes)
         .map_err(|error| format!("Parse video style metadata: {error}"))?;
     analyze(document)
-}
-
-pub(super) fn run_ffprobe(
-    ffprobe: &Path,
-    args: &[&str],
-    cancel: &AtomicBool,
-    timeout: Duration,
-) -> Result<Vec<u8>, String> {
-    if cancel.load(Ordering::Acquire) {
-        return Err("Video analysis was cancelled.".into());
-    }
-    let mut command = Command::new(ffprobe);
-    command
-        .args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    let mut child = command
-        .spawn()
-        .map_err(|error| format!("Start video style probe: {error}"))?;
-    let _job = match ProbeJob::attach(&child) {
-        Ok(job) => job,
-        Err(error) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(error);
-        }
-    };
-    let mut output = child
-        .stdout
-        .take()
-        .ok_or("The video probe did not provide output.")?;
-    let reader = std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        output
-            .by_ref()
-            .take(MAX_OUTPUT_BYTES + 1)
-            .read_to_end(&mut bytes)
-            .map(|_| bytes)
-    });
-    let started = Instant::now();
-    let status = loop {
-        if cancel.load(Ordering::Acquire) || started.elapsed() >= timeout {
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = reader.join();
-            return Err("Video style analysis was cancelled or timed out.".into());
-        }
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => std::thread::sleep(Duration::from_millis(25)),
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = reader.join();
-                return Err(format!("Wait for video style probe: {error}"));
-            }
-        }
-    };
-    let bytes = reader
-        .join()
-        .map_err(|_| "Read video style probe: reader stopped unexpectedly.")?
-        .map_err(|error| format!("Read video style probe: {error}"))?;
-    if !status.success() || bytes.len() as u64 > MAX_OUTPUT_BYTES {
-        return Err("Video style analysis did not produce usable metadata.".into());
-    }
-    Ok(bytes)
 }

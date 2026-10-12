@@ -23,7 +23,10 @@ impl ffi::PlayerController {
                 Event::StartFile => {
                     self.as_mut().rust_mut().file_loaded = false;
                 }
-                Event::FileLoaded => self.as_mut().rust_mut().file_loaded = true,
+                Event::FileLoaded => {
+                    self.as_mut().rust_mut().file_loaded = true;
+                    self.as_mut().begin_gpu_probe();
+                }
                 Event::EndFile(error) => {
                     self.as_mut().rust_mut().file_loaded = false;
                     if error < 0 && self.media.as_ref() == Some(&self.observed_path) {
@@ -34,6 +37,9 @@ impl ffi::PlayerController {
                     let known = self.as_mut().rust_mut().pending_commands.remove(&id);
                     if known && error < 0 {
                         self.as_mut().fail(session.error(error));
+                    }
+                    if let Some(action) = self.as_mut().rust_mut().gpu_commands.remove(&id) {
+                        self.as_mut().gpu_command_complete(action, error);
                     }
                 }
                 Event::Shutdown => {
@@ -69,7 +75,8 @@ impl ffi::PlayerController {
     fn apply_property(mut self: Pin<&mut Self>, name: &str, value: PropertyValue) {
         match (name, value) {
             ("time-pos", PropertyValue::Number(position)) => {
-                self.as_mut().rust_mut().position = position
+                self.as_mut().rust_mut().position = position;
+                self.as_mut().tick_gpu_quality();
             }
             ("time-pos", PropertyValue::Unavailable) => self.as_mut().rust_mut().position = 0.0,
             ("duration", PropertyValue::Number(duration)) => {
@@ -97,6 +104,14 @@ impl ffi::PlayerController {
             }
             ("hwdec-current", PropertyValue::Text(decoder)) => {
                 self.as_mut().rust_mut().hardware_decoder = QString::from(decoder)
+            }
+            ("video-frame-info/interlaced", PropertyValue::Flag(true))
+                if !self.gpu.interlaced_seen =>
+            {
+                self.as_mut().cancel_gpu();
+                self.as_mut().rust_mut().gpu.interlaced_seen = true;
+                self.as_mut().rust_mut().gpu.framegen_status = "guarded".into();
+                self.as_mut().apply_gpu_policy();
             }
             ("track-list", PropertyValue::Text(json)) => {
                 match serde_json::from_str::<Vec<Track>>(&json) {

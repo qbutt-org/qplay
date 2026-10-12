@@ -57,6 +57,8 @@ int main(int argc, char *argv[])
         profile = QDir(profile).absoluteFilePath(QStringLiteral("data"));
     }
 
+    qputenv("QPLAY_MEDIA_RUNTIME", QDir(profile).absoluteFilePath(QStringLiteral("framegen")).toUtf8());
+
     int result;
     {
         Qplay::PlayerController backend;

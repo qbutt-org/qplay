@@ -5,6 +5,40 @@ pub enum ContentKind {
     Unknown,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContentChoice {
+    Auto,
+    Anime,
+    Movie,
+}
+
+impl ContentChoice {
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "auto" => Some(Self::Auto),
+            "anime" => Some(Self::Anime),
+            "movie" => Some(Self::Movie),
+            _ => None,
+        }
+    }
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Anime => "anime",
+            Self::Movie => "movie",
+        }
+    }
+
+    pub fn effective(self, detected: ContentKind) -> ContentKind {
+        match self {
+            Self::Auto => detected,
+            Self::Anime => ContentKind::Anime,
+            Self::Movie => ContentKind::Movie,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct StyleMetrics {
     pub repeat_fraction: f64,

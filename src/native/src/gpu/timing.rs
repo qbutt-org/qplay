@@ -5,7 +5,9 @@ use std::time::Duration;
 use serde::Deserialize;
 
 use super::framegen::Rate;
-use super::probe::run_ffprobe;
+use super::process::run_bounded;
+
+const MAX_OUTPUT_BYTES: u64 = 8 * 1024 * 1024;
 
 const SAMPLE_FRACTIONS: [f64; 4] = [0.12, 0.36, 0.62, 0.86];
 const FRAMES_PER_SAMPLE: usize = 48;
@@ -35,6 +37,95 @@ struct TimingFrame {
 struct TimingPacket {
     pts: Option<String>,
     dts: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ExtractorResult {
+    status: i32,
+    stdout: String,
+}
+
+#[derive(Default, Deserialize)]
+struct ExtractedFormat {
+    format: Option<String>,
+    format_note: Option<String>,
+    vcodec: Option<String>,
+    url: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ExtractedVideo {
+    formats: Option<Vec<ExtractedFormat>>,
+    requested_formats: Option<Vec<ExtractedFormat>>,
+    requested_downloads: Option<Vec<ExtractedFormat>>,
+    #[serde(flatten)]
+    selected: ExtractedFormat,
+}
+
+pub struct ResolvedNetworkSource {
+    pub url: String,
+    pub video_stream: String,
+}
+
+pub fn resolve_network_source(
+    stream_filename: &str,
+    track_title: &str,
+    ff_index: u32,
+    ytdl_result: Option<&str>,
+) -> Result<ResolvedNetworkSource, String> {
+    if stream_filename.starts_with("http://") || stream_filename.starts_with("https://") {
+        return Ok(ResolvedNetworkSource {
+            url: stream_filename.to_owned(),
+            video_stream: ff_index.to_string(),
+        });
+    }
+    let result: ExtractorResult =
+        serde_json::from_str(ytdl_result.ok_or("The selected stream has no extractor result.")?)
+            .map_err(|_| "The selected stream has an invalid extractor result.")?;
+    if result.status != 0 || result.stdout.len() > 4 * 1024 * 1024 {
+        return Err("The selected stream could not be resolved for timing analysis.".into());
+    }
+    let document: ExtractedVideo = serde_json::from_str(&result.stdout)
+        .map_err(|_| "The selected stream has invalid format metadata.")?;
+    let root = [document.selected];
+    let formats = if !track_title.is_empty() {
+        document.formats.as_deref()
+    } else {
+        None
+    }
+    .or(document.requested_formats.as_deref())
+    .or(document.requested_downloads.as_deref())
+    .unwrap_or(&root);
+    let mut selected = None;
+    for (index, format) in formats.iter().enumerate() {
+        let Some(url) = format.url.as_deref() else {
+            continue;
+        };
+        let title = format
+            .format
+            .as_deref()
+            .or(format.format_note.as_deref())
+            .unwrap_or("");
+        if format.vcodec.as_deref().is_none_or(|codec| codec == "none")
+            || !url.starts_with("http://") && !url.starts_with("https://")
+            || !stream_filename.contains(url)
+            || !track_title.is_empty()
+                && track_title != title
+                && track_title != format!("{title} muxed-{}", index + 1)
+        {
+            continue;
+        }
+        if selected.is_some() {
+            return Err("The selected network video format is ambiguous.".into());
+        }
+        selected = Some(url.to_owned());
+    }
+    selected
+        .map(|url| ResolvedNetworkSource {
+            url,
+            video_stream: "v:0".into(),
+        })
+        .ok_or_else(|| "The selected network video format was not found.".into())
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -214,7 +305,7 @@ pub fn probe_local_timing(
         .map(|fraction| format!("{:.3}%+#{FRAMES_PER_SAMPLE}", duration * fraction))
         .collect::<Vec<_>>()
         .join(",");
-    let bytes = run_ffprobe(
+    let bytes = run_bounded(
         ffprobe,
         &[
             "-v",
@@ -234,6 +325,8 @@ pub fn probe_local_timing(
         ],
         cancel,
         Duration::from_secs(8),
+        MAX_OUTPUT_BYTES,
+        None,
     )?;
     let document: TimingDocument = serde_json::from_slice(&bytes)
         .map_err(|error| format!("Parse video timing metadata: {error}"))?;
@@ -331,7 +424,7 @@ pub fn probe_network_timing(
         "--",
         &url,
     ]);
-    let bytes = run_ffprobe(ffprobe, &args, cancel, timeout)?;
+    let bytes = run_bounded(ffprobe, &args, cancel, timeout, MAX_OUTPUT_BYTES, None)?;
     let document: TimingDocument = serde_json::from_slice(&bytes)
         .map_err(|error| format!("Parse network timing metadata: {error}"))?;
     analyze(document)

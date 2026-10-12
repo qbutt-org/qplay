@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -14,6 +14,7 @@ use crate::track_model;
 
 mod actions;
 mod events;
+mod gpu;
 mod startup;
 
 pub use startup::{FrameWakeup, StartTask, Wakeup, frame_wakeup, run_start_task, wakeup};
@@ -86,6 +87,12 @@ pub mod ffi {
         #[qproperty(QString, error_text, cxx_name = "errorText", READ = error_text, NOTIFY = state_changed)]
         #[qproperty(QString, audio_output, cxx_name = "audioOutput", READ = audio_output, NOTIFY = state_changed)]
         #[qproperty(QString, hardware_decoder, cxx_name = "hardwareDecoder", READ = hardware_decoder, NOTIFY = state_changed)]
+        #[qproperty(QString, shader_choice, cxx_name = "shaderChoice", READ = shader_choice, NOTIFY = state_changed)]
+        #[qproperty(QString, content_choice, cxx_name = "contentChoice", READ = content_choice, NOTIFY = state_changed)]
+        #[qproperty(QString, framegen_choice, cxx_name = "framegenChoice", READ = framegen_choice, NOTIFY = state_changed)]
+        #[qproperty(QString, effective_shader, cxx_name = "effectiveShader", READ = effective_shader, NOTIFY = state_changed)]
+        #[qproperty(QString, framegen_status, cxx_name = "framegenStatus", READ = framegen_status, NOTIFY = state_changed)]
+        #[qproperty(QString, gpu_error, cxx_name = "gpuError", READ = gpu_error, NOTIFY = state_changed)]
         #[qproperty(*mut TrackModel, audio_tracks, cxx_name = "audioTracks", READ = audio_tracks_model, CONSTANT)]
         #[qproperty(*mut TrackModel, subtitle_tracks, cxx_name = "subtitleTracks", READ = subtitle_tracks_model, CONSTANT)]
         type PlayerController = super::PlayerControllerRust;
@@ -120,6 +127,18 @@ pub mod ffi {
         fn audio_output(&self) -> QString;
         #[cxx_name = "hardwareDecoder"]
         fn hardware_decoder(&self) -> QString;
+        #[cxx_name = "shaderChoice"]
+        fn shader_choice(&self) -> QString;
+        #[cxx_name = "contentChoice"]
+        fn content_choice(&self) -> QString;
+        #[cxx_name = "framegenChoice"]
+        fn framegen_choice(&self) -> QString;
+        #[cxx_name = "effectiveShader"]
+        fn effective_shader(&self) -> QString;
+        #[cxx_name = "framegenStatus"]
+        fn framegen_status(&self) -> QString;
+        #[cxx_name = "gpuError"]
+        fn gpu_error(&self) -> QString;
         #[cxx_name = "audioTracks"]
         fn audio_tracks_model(&self) -> *mut TrackModel;
         #[cxx_name = "subtitleTracks"]
@@ -136,6 +155,15 @@ pub mod ffi {
         #[qinvokable]
         #[rust_name = "change_audio_delay"]
         fn changeAudioDelay(self: Pin<&mut Self>, delay: f64);
+        #[qinvokable]
+        #[rust_name = "change_shader"]
+        fn changeShader(self: Pin<&mut Self>, choice: &QString);
+        #[qinvokable]
+        #[rust_name = "change_content"]
+        fn changeContent(self: Pin<&mut Self>, choice: &QString);
+        #[qinvokable]
+        #[rust_name = "change_framegen"]
+        fn changeFramegen(self: Pin<&mut Self>, choice: &QString);
         #[qinvokable]
         #[rust_name = "open_media"]
         fn openMedia(self: Pin<&mut Self>, media: &QString);
@@ -191,6 +219,8 @@ pub struct PlayerControllerRust {
     media: Option<String>,
     observed_path: String,
     pending_commands: HashSet<u64>,
+    gpu_commands: HashMap<u64, gpu::GpuCommand>,
+    gpu: gpu::GpuState,
     audio_tracks: UniquePtr<track_model::ffi::TrackModel>,
     subtitle_tracks: UniquePtr<track_model::ffi::TrackModel>,
     state: ffi::State,
@@ -225,6 +255,8 @@ impl Default for PlayerControllerRust {
             media: None,
             observed_path: String::new(),
             pending_commands: HashSet::new(),
+            gpu_commands: HashMap::new(),
+            gpu: gpu::GpuState::default(),
             audio_tracks: track_model::ffi::create_track_model(),
             subtitle_tracks: track_model::ffi::create_track_model(),
             state: ffi::State::Stopped,
@@ -256,6 +288,7 @@ impl Drop for PlayerControllerRust {
         if let Some(cancel) = &self.startup_cancel {
             cancel.store(true, Ordering::Release);
         }
+        self.gpu.cancel();
     }
 }
 
@@ -343,6 +376,30 @@ impl ffi::PlayerController {
         self.hardware_decoder.clone()
     }
 
+    fn shader_choice(&self) -> QString {
+        QString::from(self.gpu.shader_choice.id())
+    }
+
+    fn content_choice(&self) -> QString {
+        QString::from(self.gpu.content_choice.id())
+    }
+
+    fn framegen_choice(&self) -> QString {
+        QString::from(self.gpu.framegen_choice.id())
+    }
+
+    fn effective_shader(&self) -> QString {
+        QString::from(self.gpu.applied_shader.id())
+    }
+
+    fn framegen_status(&self) -> QString {
+        QString::from(self.gpu.framegen_status.as_str())
+    }
+
+    fn gpu_error(&self) -> QString {
+        QString::from(self.gpu.error.as_str())
+    }
+
     fn audio_tracks_model(&self) -> *mut track_model::ffi::TrackModel {
         self.audio_tracks.as_ptr().cast_mut()
     }
@@ -368,6 +425,12 @@ impl ffi::PlayerController {
                 state.language = QString::from(settings.language);
                 state.appearance = QString::from(settings.appearance);
                 state.audio_delay = settings.audio_delay;
+                state.gpu.shader_choice =
+                    crate::gpu::shaders::ShaderChoice::from_id(&settings.shader).unwrap();
+                state.gpu.content_choice =
+                    crate::gpu::content::ContentChoice::from_id(&settings.content).unwrap();
+                state.gpu.framegen_choice =
+                    crate::gpu::framegen::FramegenChoice::from_id(&settings.framegen).unwrap();
                 state.settings_error = QString::default();
             }
             Err(error) => state.settings_error = QString::from(error),
@@ -409,6 +472,9 @@ impl ffi::PlayerController {
                 language: self.language.to_string(),
                 appearance: self.appearance.to_string(),
                 audio_delay: self.audio_delay,
+                shader: self.gpu.shader_choice.id().into(),
+                content: self.gpu.content_choice.id().into(),
+                framegen: self.gpu.framegen_choice.id().into(),
             };
             self.as_mut().rust_mut().settings_error = match settings.save(&path) {
                 Ok(()) => QString::default(),

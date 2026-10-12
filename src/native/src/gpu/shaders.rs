@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use super::content::ContentKind;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -19,6 +21,23 @@ pub enum ShaderPreset {
 pub enum ShaderChoice {
     Auto,
     Manual(ShaderPreset),
+}
+
+impl ShaderChoice {
+    pub fn from_id(id: &str) -> Option<Self> {
+        if id == "auto" {
+            Some(Self::Auto)
+        } else {
+            ShaderPreset::from_id(id).map(Self::Manual)
+        }
+    }
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Manual(preset) => preset.id(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -200,6 +219,22 @@ impl ShaderPreset {
             ],
             (Fsr, _) => &["FSR.glsl"],
         }
+    }
+
+    pub fn mpv_value(self, quality: ShaderQuality, shader_dir: &Path) -> Result<String, String> {
+        self.files(quality)
+            .iter()
+            .map(|name| {
+                let path = shader_dir.join(name);
+                if !path.is_file() {
+                    return Err(format!("The shader is missing: {}", path.display()));
+                }
+                path.to_str().map(str::to_owned).ok_or_else(|| {
+                    format!("The shader path is not valid UTF-8: {}", path.display())
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(|paths| paths.join(";"))
     }
 }
 

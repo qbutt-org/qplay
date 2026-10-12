@@ -16,6 +16,7 @@ Popup {
     readonly property string iconRoot: "qrc:/qt/qml/Qplay/Views/assets/icons/"
     readonly property string subtitleChoice: backend.subtitleSelection === "no" ? (russian ? qsTr("Выкл.") : qsTr("Off")) : backend.subtitleSelection === "auto" ? (russian ? qsTr("Авто") : qsTr("Auto")) : (russian ? qsTr("Дорожка %1") : qsTr("Track %1")).arg(backend.subtitleSelection)
     readonly property string audioChoice: backend.audioSelection === "auto" ? (russian ? qsTr("Авто") : qsTr("Auto")) : (russian ? qsTr("Дорожка %1") : qsTr("Track %1")).arg(backend.audioSelection)
+    readonly property string fxStatus: backend.framegenStatus === "active" ? (russian ? qsTr("Генерация кадров") : qsTr("Frame generation")) : backend.effectiveShader === "off" ? (russian ? qsTr("Выкл.") : qsTr("Off")) : backend.effectiveShader === "fsr" ? "FSR" : "Anime4K"
 
     signal advancedRequested
 
@@ -59,7 +60,7 @@ Popup {
                 }
                 Label {
                     Layout.fillWidth: true
-                    text: root.page === 0 ? (root.russian ? qsTr("Воспроизведение") : qsTr("Playback")) : root.page === 1 ? (root.russian ? qsTr("Аудиодорожка") : qsTr("Audio track")) : root.page === 2 ? (root.russian ? qsTr("Субтитры") : qsTr("Subtitles")) : (root.russian ? qsTr("Скорость") : qsTr("Speed"))
+                    text: root.page === 0 ? (root.russian ? qsTr("Воспроизведение") : qsTr("Playback")) : root.page === 1 ? (root.russian ? qsTr("Аудиодорожка") : qsTr("Audio track")) : root.page === 2 ? (root.russian ? qsTr("Субтитры") : qsTr("Subtitles")) : root.page === 3 ? (root.russian ? qsTr("Скорость") : qsTr("Speed")) : "FX"
                     color: "#ffffff"
                     font.pixelSize: 19
                     font.weight: Font.DemiBold
@@ -82,6 +83,11 @@ Popup {
                         title: root.russian ? qsTr("Скорость") : qsTr("Speed"),
                         value: Math.round(root.backend.speed * 100) / 100 + "×",
                         page: 3
+                    },
+                    {
+                        title: "FX",
+                        value: root.fxStatus,
+                        page: 4
                     }
                 ] : []
                 delegate: ItemDelegate {
@@ -434,6 +440,132 @@ Popup {
                             onClicked: root.backend.changeSpeed(modelData)
                         }
                     }
+                }
+            }
+
+            ColumnLayout {
+                visible: root.page === 4
+                Layout.fillWidth: true
+                spacing: 2
+
+                Label {
+                    Layout.topMargin: 6
+                    Layout.bottomMargin: 4
+                    text: root.russian ? qsTr("Тип видео") : qsTr("Video type")
+                    color: "#b9bec4"
+                    font.pixelSize: 13
+                }
+                Repeater {
+                    model: [
+                        { id: "auto", label: root.russian ? qsTr("Авто") : qsTr("Auto") },
+                        { id: "anime", label: root.russian ? qsTr("Аниме") : qsTr("Anime") },
+                        { id: "movie", label: root.russian ? qsTr("Фильм") : qsTr("Movie") }
+                    ]
+                    delegate: ItemDelegate {
+                        id: contentOption
+                        required property var modelData
+                        Layout.fillWidth: true
+                        implicitHeight: 44
+                        text: modelData.label
+                        Accessible.name: text
+                        onClicked: root.backend.changeContent(modelData.id)
+                        contentItem: RowLayout {
+                            Label { Layout.fillWidth: true; text: contentOption.text; color: "#ffffff" }
+                            Image {
+                                visible: root.backend.contentChoice === contentOption.modelData.id
+                                source: root.iconRoot + "check.svg"
+                                sourceSize: Qt.size(20, 20)
+                                Layout.preferredWidth: 20
+                                Layout.preferredHeight: 20
+                            }
+                        }
+                    }
+                }
+
+                Label {
+                    Layout.topMargin: 10
+                    Layout.bottomMargin: 4
+                    text: root.russian ? qsTr("Генерация кадров") : qsTr("Frame generation")
+                    color: "#b9bec4"
+                    font.pixelSize: 13
+                }
+                Repeater {
+                    model: [
+                        { id: "auto", label: root.russian ? qsTr("Авто") : qsTr("Auto") },
+                        { id: "on", label: root.russian ? qsTr("Вкл.") : qsTr("On") },
+                        { id: "off", label: root.russian ? qsTr("Выкл.") : qsTr("Off") }
+                    ]
+                    delegate: ItemDelegate {
+                        id: framegenOption
+                        required property var modelData
+                        Layout.fillWidth: true
+                        implicitHeight: 44
+                        text: modelData.label
+                        Accessible.name: text
+                        onClicked: root.backend.changeFramegen(modelData.id)
+                        contentItem: RowLayout {
+                            Label { Layout.fillWidth: true; text: framegenOption.text; color: "#ffffff" }
+                            Image {
+                                visible: root.backend.framegenChoice === framegenOption.modelData.id
+                                source: root.iconRoot + "check.svg"
+                                sourceSize: Qt.size(20, 20)
+                                Layout.preferredWidth: 20
+                                Layout.preferredHeight: 20
+                            }
+                        }
+                    }
+                }
+
+                Label {
+                    Layout.topMargin: 10
+                    Layout.bottomMargin: 4
+                    text: root.russian ? qsTr("Масштабирование") : qsTr("Upscaling")
+                    color: "#b9bec4"
+                    font.pixelSize: 13
+                }
+                Repeater {
+                    model: [
+                        { id: "auto", label: root.russian ? qsTr("Авто") : qsTr("Auto") },
+                        { id: "off", label: root.russian ? qsTr("Выкл.") : qsTr("Off") },
+                        { id: "fsr", label: "FSR" },
+                        { id: "anime4k_a", label: "Anime4K A" },
+                        { id: "anime4k_b", label: "Anime4K B" },
+                        { id: "anime4k_c", label: "Anime4K C" },
+                        { id: "anime4k_aa", label: "Anime4K A+A" },
+                        { id: "anime4k_bb", label: "Anime4K B+B" },
+                        { id: "anime4k_ca", label: "Anime4K C+A" },
+                        { id: "anime4k_gan_2x", label: "Anime4K GAN 2×" },
+                        { id: "anime4k_gan_3x", label: "Anime4K GAN 3×" },
+                        { id: "anime4k_gan_4x", label: "Anime4K GAN 4×" }
+                    ]
+                    delegate: ItemDelegate {
+                        id: shaderOption
+                        required property var modelData
+                        Layout.fillWidth: true
+                        implicitHeight: 44
+                        text: modelData.label
+                        Accessible.name: text
+                        onClicked: root.backend.changeShader(modelData.id)
+                        contentItem: RowLayout {
+                            Label { Layout.fillWidth: true; text: shaderOption.text; color: "#ffffff" }
+                            Image {
+                                visible: root.backend.shaderChoice === shaderOption.modelData.id
+                                source: root.iconRoot + "check.svg"
+                                sourceSize: Qt.size(20, 20)
+                                Layout.preferredWidth: 20
+                                Layout.preferredHeight: 20
+                            }
+                        }
+                    }
+                }
+
+                Label {
+                    visible: root.backend.gpuError.length > 0
+                    Layout.fillWidth: true
+                    Layout.topMargin: 8
+                    wrapMode: Text.WordWrap
+                    text: root.russian ? qsTr("Не удалось применить FX") : qsTr("Could not apply FX")
+                    color: "#ff9a9a"
                 }
             }
         }

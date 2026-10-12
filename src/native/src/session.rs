@@ -134,6 +134,7 @@ impl Session {
             ("path", mpv::FORMAT_STRING),
             ("current-ao", mpv::FORMAT_STRING),
             ("hwdec-current", mpv::FORMAT_STRING),
+            ("video-frame-info/interlaced", mpv::FORMAT_FLAG),
         ] {
             let name = CString::new(name).map_err(|error| error.to_string())?;
             // SAFETY: The initialized handle and property name remain valid during the call.
@@ -192,6 +193,58 @@ impl Session {
             )
         })?;
         Ok(value)
+    }
+
+    pub fn number(&self, name: &str) -> Option<f64> {
+        let raw = self.raw();
+        let name = CString::new(name).ok()?;
+        let mut value = 0.0;
+        let result = unsafe {
+            (raw.api.get_property)(
+                raw.handle,
+                name.as_ptr(),
+                mpv::FORMAT_DOUBLE,
+                (&mut value as *mut f64).cast(),
+            )
+        };
+        (result >= 0 && value.is_finite()).then_some(value)
+    }
+
+    pub fn flag(&self, name: &str) -> Option<bool> {
+        let raw = self.raw();
+        let name = CString::new(name).ok()?;
+        let mut value = 0;
+        let result = unsafe {
+            (raw.api.get_property)(
+                raw.handle,
+                name.as_ptr(),
+                mpv::FORMAT_FLAG,
+                (&mut value as *mut i32).cast(),
+            )
+        };
+        (result >= 0).then_some(value != 0)
+    }
+
+    pub fn text(&self, name: &str) -> Option<String> {
+        let raw = self.raw();
+        let name = CString::new(name).ok()?;
+        let mut value: *mut c_char = ptr::null_mut();
+        let result = unsafe {
+            (raw.api.get_property)(
+                raw.handle,
+                name.as_ptr(),
+                mpv::FORMAT_STRING,
+                (&mut value as *mut *mut c_char).cast(),
+            )
+        };
+        if result < 0 || value.is_null() {
+            return None;
+        }
+        let text = unsafe { CStr::from_ptr(value) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { (raw.api.free)(value.cast()) };
+        Some(text)
     }
 
     pub fn poll(&self) -> Option<Event> {

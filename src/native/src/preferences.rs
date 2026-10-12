@@ -8,6 +8,16 @@ pub struct Preferences {
     pub language: String,
     pub appearance: String,
     pub audio_delay: f64,
+    #[serde(default = "automatic")]
+    pub shader: String,
+    #[serde(default = "automatic")]
+    pub content: String,
+    #[serde(default = "automatic")]
+    pub framegen: String,
+}
+
+fn automatic() -> String {
+    "auto".into()
 }
 
 impl Preferences {
@@ -20,6 +30,9 @@ impl Preferences {
             },
             appearance: "system".into(),
             audio_delay: 0.0,
+            shader: automatic(),
+            content: automatic(),
+            framegen: automatic(),
         };
 
         let contents = match std::fs::read(path) {
@@ -32,6 +45,9 @@ impl Preferences {
         if !matches!(saved.language.as_str(), "ru" | "en")
             || !matches!(saved.appearance.as_str(), "system" | "light" | "dark")
             || !saved.audio_delay.is_finite()
+            || crate::gpu::shaders::ShaderChoice::from_id(&saved.shader).is_none()
+            || crate::gpu::content::ContentChoice::from_id(&saved.content).is_none()
+            || crate::gpu::framegen::FramegenChoice::from_id(&saved.framegen).is_none()
         {
             return Err("Player preferences contain an unknown language or appearance.".into());
         }

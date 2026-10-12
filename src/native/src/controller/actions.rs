@@ -38,7 +38,9 @@ impl ffi::PlayerController {
     pub(super) fn open_media(mut self: Pin<&mut Self>, media: &QString) {
         match media_path(&media.to_string()) {
             Ok(media) => {
+                self.as_mut().cancel_gpu();
                 let mut state = self.as_mut().rust_mut();
+                state.gpu.interlaced_seen = false;
                 state.media = Some(media);
                 state.file_loaded = false;
                 state.pending_commands.clear();
@@ -127,6 +129,7 @@ impl ffi::PlayerController {
     }
 
     pub(super) fn stop(mut self: Pin<&mut Self>) {
+        self.as_mut().cancel_gpu();
         let mut state = self.as_mut().rust_mut();
         state.media = None;
         state.file_loaded = false;

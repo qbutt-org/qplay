@@ -1,4 +1,7 @@
 use super::content::ContentKind;
+use super::runtime::Runtime;
+use serde_json::{Value, json};
+use std::path::Path;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Backend {
@@ -11,6 +14,25 @@ pub enum FramegenChoice {
     Auto,
     On,
     Off,
+}
+
+impl FramegenChoice {
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "auto" => Some(Self::Auto),
+            "on" => Some(Self::On),
+            "off" => Some(Self::Off),
+            _ => None,
+        }
+    }
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::On => "on",
+            Self::Off => "off",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -212,6 +234,61 @@ pub fn choose(
     }))
 }
 
+pub fn graph(
+    runtime: &Runtime,
+    script: &Path,
+    source: Rate,
+    selection: Selection,
+    matrix: &str,
+    full_range: bool,
+) -> Result<(String, Value), String> {
+    let matrix = match matrix {
+        "bt.709" => "709",
+        "bt.601" => "470bg",
+        "smpte-240m" => "240m",
+        "bt.2020-ncl" => "2020ncl",
+        "" | "auto" | "unknown" if selection.output_width >= 1280 => "709",
+        "" | "auto" | "unknown" => "470bg",
+        _ => return Err("The video color matrix is unsupported by frame generation.".into()),
+    };
+    let config = json!({
+        "schema_version": 1,
+        "backend": match runtime.backend() { Backend::TensorRt => "trt", Backend::OpenVino => "openvino" },
+        "model": "4.26",
+        "source_num": source.num,
+        "source_den": source.den,
+        "target_num": selection.target.rate.num,
+        "target_den": selection.target.rate.den,
+        "process_scale": 1,
+        "output_width": selection.output_width,
+        "output_height": selection.output_height,
+        "scene_threshold": 0.08917166076596267_f64,
+        "duplicate_threshold": 0.001,
+        "gpu_lock_owned": false,
+        "gpu_lock_bypassed": false,
+        "matrix": matrix,
+        "range": if full_range { "full" } else { "limited" },
+        "plugin_dir": runtime.plugin_dir,
+        "model_dir": runtime.model_dir,
+        "engine_dir": runtime.engine_dir,
+        "device_id": runtime.device_binding.device_ordinal,
+        "gpu_id": runtime.device_binding.gpu_id,
+    });
+    let data = serde_json::to_string(&config)
+        .map_err(|error| format!("Write frame generation filter: {error}"))?;
+    let script = script
+        .to_str()
+        .ok_or("The frame generation script path is not valid UTF-8.")?;
+    let filter = format!(
+        "@mpv-framegen:vapoursynth=file=%{}%{}:buffered-frames=8:concurrent-frames=8:user-data=%{}%{}",
+        script.len(),
+        script,
+        data.len(),
+        data,
+    );
+    Ok((filter, config))
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct QualitySample {
     pub playback_position: f64,
@@ -278,10 +355,11 @@ impl SessionQuality {
 
     pub fn tick(&mut self, state: PlaybackState) -> QualityAction {
         if self.disabled || !state.now.is_finite() || !state.filter_active {
+            self.settle_started = None;
             self.first = None;
             return QualityAction::Keep;
         }
-        if state.paused || state.seeking || state.caching || state.eof {
+        if state.paused || state.seeking || state.caching || state.eof || state.idle {
             self.settle_started = None;
             self.first = None;
             return QualityAction::Keep;
@@ -310,7 +388,7 @@ impl SessionQuality {
             return self.lower();
         }
 
-        if state.idle || !state.output_ready || state.sample.playback_position <= 0.0 {
+        if !state.output_ready || state.sample.playback_position <= 0.0 {
             self.first = None;
             return QualityAction::Keep;
         }
