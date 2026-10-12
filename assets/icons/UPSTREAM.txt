@@ -1,0 +1,10 @@
+Tabler Icons outline v3.49.0
+https://github.com/tabler/tabler-icons
+Commit: bbed884d15354b5cebf2493371f20dc2d5e83eaf
+License: LICENSE in this directory
+
+Each standard SVG uses the same filename and geometry as
+icons/outline/<filename> at the pinned commit. The x-dark, minus-dark and
+plus-dark variants come from x, minus and plus respectively. Qt Image does
+not supply SVG currentColor, so only the stroke color changed: #ffffff for
+standard controls, #62beff for check and #35465a for the light-panel variants.

@@ -1,0 +1,456 @@
+#include <Windows.h>
+#include <TlHelp32.h>
+
+#include <cmath>
+#include <cstdio>
+#include <memory>
+#include <stdexcept>
+
+#include <QDir>
+#include <QElapsedTimer>
+#include <QFile>
+#include <QFileInfo>
+#include <QGuiApplication>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QMetaObject>
+#include <QMouseEvent>
+#include <QOffscreenSurface>
+#include <QOpenGLContext>
+#include <QOpenGLFramebufferObject>
+#include <QQmlComponent>
+#include <QQmlEngine>
+#include <QQuickGraphicsDevice>
+#include <QQuickItem>
+#include <QQuickRenderControl>
+#include <QQuickRenderTarget>
+#include <QQuickStyle>
+#include <QQuickWindow>
+#include <QThread>
+#include <QThreadPool>
+
+#include "qplay_native/src/controller.cxxqt.h"
+#include "qplay_native/src/track_model.cxxqt.h"
+
+namespace
+{
+void require(bool condition, const char *message)
+{
+    if (!condition)
+        throw std::runtime_error(message);
+}
+
+int childProcessCount()
+{
+    const auto snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    require(snapshot != INVALID_HANDLE_VALUE, "Process snapshot failed");
+    int count = 0;
+    PROCESSENTRY32W process {sizeof(process)};
+    if (Process32FirstW(snapshot, &process))
+    {
+        do
+        {
+            if (process.th32ParentProcessID == GetCurrentProcessId())
+            {
+                ++count;
+                std::fwprintf(stderr, L"Owned child: %lu %s\n", process.th32ProcessID, process.szExeFile);
+            }
+        }
+        while (Process32NextW(snapshot, &process));
+    }
+    CloseHandle(snapshot);
+    return count;
+}
+
+qint64 selectedSubtitle(Qplay::TrackModel *model)
+{
+    for (int row = 0; row < model->rowCount({}); ++row)
+    {
+        const auto index = model->index(row, 0, {});
+        if (model->data(index, 257).toString() == QStringLiteral("sub")
+            && model->data(index, 259).toBool())
+        {
+            return model->data(index, 256).toLongLong();
+        }
+    }
+    return -1;
+}
+
+QQuickItem *findVisualItem(QQuickItem *parent, const QString &name)
+{
+    if (!parent)
+        return nullptr;
+    if (parent->objectName() == name)
+        return parent;
+    for (auto *child : parent->childItems())
+    {
+        if (auto *found = findVisualItem(child, name))
+            return found;
+    }
+    return nullptr;
+}
+
+void click(QQuickWindow &window, QQuickItem &item)
+{
+    const auto point = item.mapToScene(QPointF(item.width() / 2, item.height() / 2));
+    QMouseEvent press(QEvent::MouseButtonPress, point, point, point,
+        Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QMouseEvent release(QEvent::MouseButtonRelease, point, point, point,
+        Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(&window, &press);
+    QCoreApplication::sendEvent(&window, &release);
+}
+
+void hover(QQuickWindow &window, QQuickItem &item)
+{
+    const auto point = item.mapToScene(QPointF(item.width() / 2, item.height() / 2));
+    QMouseEvent move(QEvent::MouseMove, point, point, point,
+        Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+    QCoreApplication::sendEvent(&window, &move);
+}
+}
+
+int main(int argc, char *argv[])
+{
+    if (argc != 6)
+        return 2;
+
+    QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
+    QQuickStyle::setStyle(QStringLiteral("Basic"));
+    QGuiApplication app(argc, argv);
+    const QString library = QString::fromUtf8(argv[1]);
+    const QString media = QString::fromUtf8(argv[2]);
+    const QString secondMedia = QString::fromUtf8(argv[3]);
+    const QString profile = QString::fromUtf8(argv[4]);
+    const QString evidencePrefix = QString::fromUtf8(argv[5]);
+    QJsonObject evidence;
+    int exitCode = 0;
+
+    try
+    {
+        QOpenGLContext gl;
+        require(gl.create(), "Create OpenGL context failed");
+        QOffscreenSurface surface;
+        surface.setFormat(gl.format());
+        surface.create();
+        require(gl.makeCurrent(&surface), "Make OpenGL context current failed");
+
+        {
+            Qplay::PlayerController backend;
+            const QString preferences = QDir(profile).absoluteFilePath(QStringLiteral("config/preferences.json"));
+            backend.configure(preferences, QStringLiteral("en_US"));
+            backend.changeLanguage(QStringLiteral("ru"));
+            backend.changeAppearance(QStringLiteral("light"));
+            backend.changeAudioDelay(0.15);
+            require(backend.settingsError().isEmpty(), "Saving player preferences failed");
+            {
+                Qplay::PlayerController restored;
+                restored.configure(preferences, QStringLiteral("en_US"));
+                require(restored.language() == QStringLiteral("ru")
+                    && restored.appearance() == QStringLiteral("light")
+                    && std::abs(restored.audioDelay() - 0.15) < 0.001,
+                    "Player preferences did not persist");
+            }
+            backend.changeLanguage(QStringLiteral("en"));
+            backend.changeAppearance(QStringLiteral("dark"));
+
+            QQuickRenderControl control;
+            QQuickWindow window(&control);
+            window.setColor(Qt::black);
+            window.setGeometry(0, 0, 1280, 720);
+            window.setGraphicsDevice(QQuickGraphicsDevice::fromOpenGLContext(&gl));
+            require(control.initialize(), "Initialize Qt Quick failed");
+            QOpenGLFramebufferObject target(QSize(1280, 720), QOpenGLFramebufferObject::CombinedDepthStencil);
+            window.setRenderTarget(QQuickRenderTarget::fromOpenGLTexture(target.texture(), target.size()));
+
+            QQmlEngine qml;
+            QQmlComponent component(&qml);
+            component.loadFromModule(QStringLiteral("Qplay.Views"), QStringLiteral("PlayerScene"));
+            if (component.isError())
+                throw std::runtime_error(component.errorString().toStdString());
+            std::unique_ptr<QQuickItem> root(qobject_cast<QQuickItem *>(component.createWithInitialProperties({
+                {QStringLiteral("backend"), QVariant::fromValue(&backend)},
+                {QStringLiteral("width"), 1280},
+                {QStringLiteral("height"), 720}
+            })));
+            require(root != nullptr, "Create player scene failed");
+            root->setParentItem(window.contentItem());
+
+            const auto tick = [&]
+            {
+                app.processEvents();
+                require(gl.makeCurrent(&surface), "Restore current OpenGL context failed");
+                control.polishItems();
+                control.beginFrame();
+                control.sync();
+                control.render();
+                control.endFrame();
+                QThread::msleep(16);
+            };
+            const auto wait = [&](const auto &condition, const char *message)
+            {
+                QElapsedTimer timer;
+                timer.start();
+                while (!condition() && timer.elapsed() < 15000)
+                {
+                    tick();
+                    if (!backend.errorText().isEmpty())
+                        throw std::runtime_error(backend.errorText().toStdString());
+                }
+                require(condition(), message);
+            };
+
+            {
+                Qplay::PlayerController missing;
+                missing.initialize(library + QStringLiteral(".missing"), QDir(profile).absoluteFilePath(QStringLiteral("missing")));
+                wait([&] { return !missing.errorText().isEmpty(); }, "Missing engine fault did not arrive");
+                require(!missing.engineReady(), "Missing engine became ready");
+            }
+
+            const QString incorrectLibrary = QDir(profile).absoluteFilePath(QStringLiteral("untrusted.dll"));
+            QFile incorrectFile(incorrectLibrary);
+            require(incorrectFile.open(QIODevice::WriteOnly), "Create engine fault fixture failed");
+            incorrectFile.write("This is not the pinned engine");
+            incorrectFile.close();
+            {
+                Qplay::PlayerController mismatch;
+                mismatch.initialize(incorrectLibrary, QDir(profile).absoluteFilePath(QStringLiteral("mismatch")));
+                wait([&] { return !mismatch.errorText().isEmpty(); }, "Engine hash fault did not arrive");
+                require(!mismatch.engineReady(), "An untrusted engine became ready");
+            }
+
+            backend.initialize(library + QStringLiteral(".missing"), profile);
+            backend.initialize(library, profile);
+            wait([&] { return backend.engineReady(); }, "Initialize actual Rust/mpv session timed out");
+            require(std::abs(backend.appliedAudioDelay() - 0.15) < 0.001,
+                "Saved global audio delay was not applied to libmpv");
+            backend.changeMute(true);
+            wait([&] { return backend.muted(); }, "Muting before playback timed out");
+            backend.openMedia(media);
+            wait([&] { return backend.mediaLoaded() && backend.position() > 0.5; }, "Decode real media timed out");
+            require(backend.duration() > 30, "Incorrect media duration");
+            require(!backend.audioOutput().isEmpty(), "No audio output initialized");
+            require(backend.audioTracks()->rowCount({}) > 0, "No typed audio track state");
+
+            backend.changeAudioDelay(0.2);
+            wait([&] { return std::abs(backend.appliedAudioDelay() - 0.2) < 0.001; },
+                "Live audio delay did not reach libmpv");
+            backend.changeSpeed(1.25);
+            wait([&] { return std::abs(backend.speed() - 1.25) < 0.001; },
+                "Playback speed did not reach libmpv");
+
+            const auto audioIndex = backend.audioTracks()->index(0, 0, {});
+            const auto audioId = backend.audioTracks()->data(audioIndex, 256).toLongLong();
+            backend.selectTrack(QStringLiteral("audio"), audioId);
+            wait([&] { return backend.audioSelection() == QString::number(audioId); },
+                "Exact audio selection did not reach libmpv");
+            backend.selectAutomaticTrack(QStringLiteral("audio"));
+            wait([&] { return backend.audioSelection() == QStringLiteral("auto"); },
+                "Automatic audio selection did not reach libmpv");
+
+            backend.openMedia(media);
+            backend.stop();
+            QElapsedTimer cancellation;
+            cancellation.start();
+            while (cancellation.elapsed() < 500)
+                tick();
+            require(!backend.mediaLoaded(), "A canceled media request became loaded");
+            require(backend.errorText().isEmpty(), "A stale command affected the stopped player");
+            backend.openMedia(media);
+            wait([&] { return backend.mediaLoaded() && backend.position() > 0.5; }, "Reopening stopped media timed out");
+
+            backend.changeVolume(37);
+            wait([&] { return std::abs(backend.volume() - 37) < 0.001; }, "Volume command did not reach mpv");
+            auto *pauseButton = root->findChild<QQuickItem *>(QStringLiteral("pauseButton"));
+            require(pauseButton != nullptr, "Pause control unavailable");
+            hover(window, *pauseButton);
+            wait([&] { return pauseButton->isEnabled(); }, "Hover did not reveal transport controls");
+            click(window, *pauseButton);
+            wait([&] { return backend.paused(); }, "QML pause input did not reach mpv");
+            const auto pausedPosition = backend.position();
+            QElapsedTimer pauseTimer;
+            pauseTimer.start();
+            while (pauseTimer.elapsed() < 500)
+                tick();
+            require(std::abs(backend.position() - pausedPosition) < 0.05, "Playback clock advanced while paused");
+
+            backend.seek(20);
+            wait([&] { return std::abs(backend.position() - 20) < 0.05; }, "Exact seek timed out");
+            require(backend.paused(), "Seeking lost paused state");
+
+            const QString subtitles = QDir(profile).absoluteFilePath(QStringLiteral("English.srt"));
+            QFile subtitleFile(subtitles);
+            require(subtitleFile.open(QIODevice::WriteOnly), "Create legal subtitle fixture failed");
+            subtitleFile.write("1\n00:00:00,000 --> 00:00:45,000\nNative Rust player subtitle\n");
+            subtitleFile.close();
+            backend.addSubtitle(subtitles);
+            wait([&] { return selectedSubtitle(backend.subtitleTracks()) >= 0; }, "External subtitle track did not arrive");
+            const auto subtitleId = selectedSubtitle(backend.subtitleTracks());
+            backend.disableSubtitles();
+            wait([&] { return selectedSubtitle(backend.subtitleTracks()) == -1
+                && backend.subtitleSelection() == QStringLiteral("no"); }, "Subtitle disable did not reach mpv");
+            backend.selectAutomaticTrack(QStringLiteral("sub"));
+            wait([&] { return backend.subtitleSelection() == QStringLiteral("auto"); },
+                "Automatic subtitles did not reach libmpv");
+            backend.selectTrack(QStringLiteral("sub"), subtitleId);
+            wait([&] { return selectedSubtitle(backend.subtitleTracks()) == subtitleId; }, "Exact subtitle selection did not reach mpv");
+
+            click(window, *pauseButton);
+            wait([&] { return !backend.paused() && backend.position() > 21; }, "QML resume did not advance playback");
+            click(window, *pauseButton);
+            wait([&] { return backend.paused(); }, "QML pause before visual inspection failed");
+            backend.seek(20);
+            wait([&] { return std::abs(backend.position() - 20) < 0.05; },
+                "Seek to the visual inspection frame failed");
+            hover(window, *pauseButton);
+            tick();
+            require(target.toImage().save(evidencePrefix + QStringLiteral(".png")), "Save actual Qt/mpv composition failed");
+
+            auto *settingsButton = root->findChild<QQuickItem *>(QStringLiteral("settingsButton"));
+            auto *playbackMenu = root->findChild<QObject *>(QStringLiteral("playbackMenu"));
+            require(settingsButton != nullptr && playbackMenu != nullptr, "Playback settings controls unavailable");
+            hover(window, *settingsButton);
+            click(window, *settingsButton);
+            wait([&] { return playbackMenu->property("opened").toBool(); },
+                "The playback menu did not open from the centered transport");
+            const bool playbackMenuOpened = playbackMenu->property("opened").toBool();
+            hover(window, *root);
+            QElapsedTimer menuAnimation;
+            menuAnimation.start();
+            while (menuAnimation.elapsed() < 250)
+                tick();
+            require(target.toImage().save(evidencePrefix + QStringLiteral(".menu.png")),
+                "Save actual playback menu composition failed");
+            auto *popupContent = qvariant_cast<QQuickItem *>(playbackMenu->property("contentItem"));
+            require(popupContent != nullptr, "Playback menu content unavailable");
+            auto *speedRow = findVisualItem(popupContent, QStringLiteral("speedMenuRow"));
+            require(speedRow != nullptr, "Speed menu row unavailable");
+            click(window, *speedRow);
+            wait([&] { return playbackMenu->property("page").toInt() == 3; },
+                "The speed row did not open its own view");
+            const bool speedSubmenuOpened = playbackMenu->property("page").toInt() == 3;
+            tick();
+            require(target.toImage().save(evidencePrefix + QStringLiteral(".speed.png")),
+                "Save actual speed controls failed");
+            auto *speedSlider = findVisualItem(popupContent, QStringLiteral("speedSlider"));
+            auto *speedPreset = findVisualItem(popupContent, QStringLiteral("speedPreset2"));
+            require(speedSlider != nullptr && speedPreset != nullptr, "Speed slider or presets unavailable");
+            require(std::abs(speedSlider->property("from").toDouble() - 0.25) < 0.001
+                && std::abs(speedSlider->property("to").toDouble() - 4) < 0.001
+                && std::abs(speedSlider->property("stepSize").toDouble() - 0.05) < 0.001,
+                "Speed slider has the wrong range or precision");
+            click(window, *speedPreset);
+            wait([&] { return std::abs(backend.speed() - 2) < 0.001; },
+                "QML speed preset did not reach libmpv");
+
+            require(QMetaObject::invokeMethod(playbackMenu, "close"), "Close playback menu failed");
+            wait([&] { return !playbackMenu->property("opened").toBool(); },
+                "Playback menu did not close");
+            QQmlComponent settingsComponent(&qml);
+            settingsComponent.loadFromModule(QStringLiteral("Qplay.Views"), QStringLiteral("SettingsPanel"));
+            if (settingsComponent.isError())
+                throw std::runtime_error(settingsComponent.errorString().toStdString());
+            std::unique_ptr<QObject> settingsPanel(settingsComponent.createWithInitialProperties({
+                {QStringLiteral("backend"), QVariant::fromValue(&backend)},
+                {QStringLiteral("host"), QVariant::fromValue(root.get())},
+                {QStringLiteral("russian"), false},
+                {QStringLiteral("dark"), false}
+            }));
+            require(settingsPanel != nullptr, "Create advanced settings panel failed");
+            backend.changeAppearance(QStringLiteral("light"));
+            require(QMetaObject::invokeMethod(settingsPanel.get(), "open"), "Open advanced settings failed");
+            wait([&] { return settingsPanel->property("opened").toBool(); },
+                "Advanced settings did not open");
+            tick();
+            require(target.toImage().save(evidencePrefix + QStringLiteral(".settings-light.png")),
+                "Save light advanced settings failed");
+            backend.changeAppearance(QStringLiteral("dark"));
+            settingsPanel->setProperty("dark", true);
+            tick();
+            require(target.toImage().save(evidencePrefix + QStringLiteral(".settings-dark.png")),
+                "Save dark advanced settings failed");
+            require(QMetaObject::invokeMethod(settingsPanel.get(), "close"), "Close advanced settings failed");
+            backend.togglePause();
+            wait([&] { return !backend.paused(); }, "Resume after settings inspection failed");
+
+            const auto children = childProcessCount();
+            require(children == 0, "Playback spawned a child runtime");
+            evidence = {
+                {QStringLiteral("fileLoaded"), backend.mediaLoaded()},
+                {QStringLiteral("position"), backend.position()},
+                {QStringLiteral("duration"), backend.duration()},
+                {QStringLiteral("volume"), backend.volume()},
+                {QStringLiteral("audioOutput"), backend.audioOutput()},
+                {QStringLiteral("hardwareDecoder"), backend.hardwareDecoder()},
+                {QStringLiteral("audioTrackCount"), backend.audioTracks()->rowCount({})},
+                {QStringLiteral("subtitleTrackCount"), backend.subtitleTracks()->rowCount({})},
+                {QStringLiteral("selectedSubtitle"), subtitleId},
+                {QStringLiteral("speed"), backend.speed()},
+                {QStringLiteral("globalAudioDelay"), backend.audioDelay()},
+                {QStringLiteral("libmpvAudioDelay"), backend.appliedAudioDelay()},
+                {QStringLiteral("ownedChildren"), children},
+                {QStringLiteral("pauseSeekResume"), true},
+                {QStringLiteral("playbackMenuOpened"), playbackMenuOpened},
+                {QStringLiteral("speedSubmenuOpened"), speedSubmenuOpened},
+                {QStringLiteral("speedPresetApplied"), std::abs(backend.speed() - 2) < 0.001},
+                {QStringLiteral("settingsLightRendered"), true},
+                {QStringLiteral("settingsDarkRendered"), true},
+                {QStringLiteral("stopReopen"), true},
+                {QStringLiteral("preferencesPersisted"), true},
+                {QStringLiteral("engineFaults"), true},
+                {QStringLiteral("startupReplacement"), true},
+                {QStringLiteral("input"), QStringLiteral("Generated Qt mouse events on the offscreen scene")},
+                {QStringLiteral("audio"), QStringLiteral("Actual audio output initialized, muted for host workflow")}
+            };
+
+            backend.openMedia(secondMedia);
+            wait([&] { return backend.mediaLoaded() && backend.position() > 0.5; },
+                "Second legal video path did not load");
+            require(std::abs(backend.appliedAudioDelay() - 0.2) < 0.001,
+                "Global audio delay changed on the second file");
+            evidence[QStringLiteral("secondFileAudioDelay")] = backend.appliedAudioDelay();
+
+            backend.initialize(library, profile);
+            tick();
+            wait([&] { return backend.engineReady(); }, "Restarting the mpv session timed out");
+            require(std::abs(backend.appliedAudioDelay() - 0.2) < 0.001,
+                "Global audio delay was not restored into a new libmpv session");
+            wait([&] { return backend.mediaLoaded() && backend.position() > 0.5; },
+                "The second file did not reopen after a native session restart");
+            evidence[QStringLiteral("reopenedPosition")] = backend.position();
+            evidence[QStringLiteral("restartAudioDelay")] = backend.appliedAudioDelay();
+
+            backend.stop();
+            wait([&] { return !backend.mediaLoaded() && backend.position() == 0 && backend.duration() == 0; }, "Stopping actual mpv playback failed");
+            root.reset();
+            gl.makeCurrent(&surface);
+            control.invalidate();
+        }
+
+        // Closing a QObject during accepted startup must leave no live callback owner.
+        for (int attempt = 0; attempt < 4; ++attempt)
+        {
+            auto *closing = new Qplay::PlayerController;
+            closing->initialize(library, QDir(profile).absoluteFilePath(QStringLiteral("cancel-%1").arg(attempt)));
+            delete closing;
+        }
+        QElapsedTimer shutdown;
+        shutdown.start();
+        QThreadPool::globalInstance()->waitForDone();
+        evidence[QStringLiteral("shutdownMs")] = shutdown.elapsed();
+        evidence[QStringLiteral("closeDuringStartup")] = true;
+        require(childProcessCount() == 0, "Owned child survived shutdown");
+    }
+    catch (const std::exception &error)
+    {
+        evidence[QStringLiteral("error")] = QString::fromUtf8(error.what());
+        std::fprintf(stderr, "%s\n", error.what());
+        exitCode = 1;
+    }
+    QThreadPool::globalInstance()->waitForDone();
+    evidence[QStringLiteral("exitCode")] = exitCode;
+    QFile output(evidencePrefix + QStringLiteral(".json"));
+    require(output.open(QIODevice::WriteOnly), "Write evidence failed");
+    output.write(QJsonDocument(evidence).toJson());
+    return exitCode;
+}
