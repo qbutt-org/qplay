@@ -8,6 +8,8 @@ pub struct Preferences {
     pub language: String,
     pub appearance: String,
     pub audio_delay: f64,
+    #[serde(default = "default_subtitle_position")]
+    pub subtitle_position: f64,
     #[serde(default = "automatic")]
     pub shader: String,
     #[serde(default = "automatic")]
@@ -20,6 +22,12 @@ fn automatic() -> String {
     "auto".into()
 }
 
+pub const DEFAULT_SUBTITLE_POSITION: f64 = 85.0;
+
+fn default_subtitle_position() -> f64 {
+    DEFAULT_SUBTITLE_POSITION
+}
+
 impl Preferences {
     pub fn load(path: &Path, system_language: &str) -> Result<Self, String> {
         let defaults = Self {
@@ -30,6 +38,7 @@ impl Preferences {
             },
             appearance: "system".into(),
             audio_delay: 0.0,
+            subtitle_position: DEFAULT_SUBTITLE_POSITION,
             shader: automatic(),
             content: automatic(),
             framegen: automatic(),
@@ -45,11 +54,13 @@ impl Preferences {
         if !matches!(saved.language.as_str(), "ru" | "en")
             || !matches!(saved.appearance.as_str(), "system" | "light" | "dark")
             || !saved.audio_delay.is_finite()
+            || !saved.subtitle_position.is_finite()
+            || !(0.0..=100.0).contains(&saved.subtitle_position)
             || crate::gpu::shaders::ShaderChoice::from_id(&saved.shader).is_none()
             || crate::gpu::content::ContentChoice::from_id(&saved.content).is_none()
             || crate::gpu::framegen::FramegenChoice::from_id(&saved.framegen).is_none()
         {
-            return Err("Player preferences contain an unknown language or appearance.".into());
+            return Err("Player preferences contain invalid values.".into());
         }
         Ok(saved)
     }

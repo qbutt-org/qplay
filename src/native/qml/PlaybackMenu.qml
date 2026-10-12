@@ -341,6 +341,25 @@ Popup {
                     }
                     onClicked: subtitleDialog.open()
                 }
+                ItemDelegate {
+                    id: resetSubtitlePosition
+                    Layout.fillWidth: true
+                    implicitHeight: 44
+                    visible: root.backend.subtitleMovable && Math.abs(root.backend.subtitlePosition - 85) >= 0.1
+                    text: root.russian ? qsTr("Вернуть положение субтитров") : qsTr("Reset subtitle position")
+                    Accessible.name: text
+                    contentItem: Label {
+                        text: resetSubtitlePosition.text
+                        color: "#62beff"
+                    }
+                    background: Rectangle {
+                        radius: 7
+                        color: resetSubtitlePosition.hovered ? "#343638" : "transparent"
+                        border.color: resetSubtitlePosition.visualFocus ? "#009df7" : "transparent"
+                        border.width: 2
+                    }
+                    onClicked: root.backend.resetSubtitlePosition()
+                }
             }
 
             ColumnLayout {

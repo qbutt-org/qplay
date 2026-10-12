@@ -72,6 +72,8 @@ pub struct Track {
     #[serde(default)]
     pub lang: String,
     #[serde(default)]
+    pub codec: String,
+    #[serde(default)]
     pub selected: bool,
 }
 

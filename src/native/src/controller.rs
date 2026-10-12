@@ -10,6 +10,7 @@ use cxx_qt_lib::{QString, QStringList};
 
 use crate::app_update;
 use crate::launch::LaunchOptions;
+use crate::preferences::DEFAULT_SUBTITLE_POSITION;
 use crate::preferences::Preferences;
 use crate::session::{RenderLease, RetiredSession, Session};
 use crate::track_model;
@@ -101,6 +102,9 @@ pub mod ffi {
         #[qproperty(f64, volume, READ = volume, NOTIFY = state_changed)]
         #[qproperty(f64, speed, READ = speed, NOTIFY = state_changed)]
         #[qproperty(f64, audio_delay, cxx_name = "audioDelay", READ = audio_delay, NOTIFY = state_changed)]
+        #[qproperty(f64, subtitle_position, cxx_name = "subtitlePosition", READ = subtitle_position, NOTIFY = state_changed)]
+        #[qproperty(QString, subtitle_text, cxx_name = "subtitleText", READ = subtitle_text, NOTIFY = state_changed)]
+        #[qproperty(bool, subtitle_movable, cxx_name = "subtitleMovable", READ = subtitle_movable, NOTIFY = state_changed)]
         #[qproperty(f64, applied_audio_delay, cxx_name = "appliedAudioDelay", READ = applied_audio_delay, NOTIFY = state_changed)]
         #[qproperty(QString, title, READ = title, NOTIFY = state_changed)]
         #[qproperty(QString, audio_selection, cxx_name = "audioSelection", READ = audio_selection, NOTIFY = state_changed)]
@@ -144,6 +148,12 @@ pub mod ffi {
         fn speed(&self) -> f64;
         #[cxx_name = "audioDelay"]
         fn audio_delay(&self) -> f64;
+        #[cxx_name = "subtitlePosition"]
+        fn subtitle_position(&self) -> f64;
+        #[cxx_name = "subtitleText"]
+        fn subtitle_text(&self) -> QString;
+        #[cxx_name = "subtitleMovable"]
+        fn subtitle_movable(&self) -> bool;
         #[cxx_name = "appliedAudioDelay"]
         fn applied_audio_delay(&self) -> f64;
         fn title(&self) -> QString;
@@ -222,6 +232,18 @@ pub mod ffi {
         #[qinvokable]
         #[rust_name = "install_update"]
         fn installUpdate(self: Pin<&mut Self>) -> bool;
+        #[qinvokable]
+        #[rust_name = "preview_subtitle_position"]
+        fn previewSubtitlePosition(self: Pin<&mut Self>, position: f64);
+        #[qinvokable]
+        #[rust_name = "commit_subtitle_position"]
+        fn commitSubtitlePosition(self: Pin<&mut Self>);
+        #[qinvokable]
+        #[rust_name = "cancel_subtitle_position"]
+        fn cancelSubtitlePosition(self: Pin<&mut Self>, position: f64);
+        #[qinvokable]
+        #[rust_name = "reset_subtitle_position"]
+        fn resetSubtitlePosition(self: Pin<&mut Self>);
         #[qinvokable]
         #[rust_name = "change_shader"]
         fn changeShader(self: Pin<&mut Self>, choice: &QString);
@@ -313,6 +335,9 @@ pub struct PlayerControllerRust {
     volume: f64,
     speed: f64,
     audio_delay: f64,
+    subtitle_position: f64,
+    subtitle_text: String,
+    subtitle_visible: bool,
     title: QString,
     audio_selection: QString,
     subtitle_selection: QString,
@@ -363,6 +388,9 @@ impl Default for PlayerControllerRust {
             volume: 100.0,
             speed: 1.0,
             audio_delay: 0.0,
+            subtitle_position: DEFAULT_SUBTITLE_POSITION,
+            subtitle_text: String::new(),
+            subtitle_visible: true,
             title: QString::default(),
             audio_selection: QString::from("auto"),
             subtitle_selection: QString::from("auto"),
@@ -396,6 +424,18 @@ impl Drop for PlayerControllerRust {
         if let Some(cancel) = &self.update_cancel {
             cancel.store(true, Ordering::Release);
         }
+    }
+}
+
+impl PlayerControllerRust {
+    fn supports_subtitle_position(&self) -> bool {
+        self.subtitle_tracks.rows.iter().any(|track| {
+            track.selected
+                && matches!(
+                    track.codec.as_str(),
+                    "subrip" | "webvtt" | "mov_text" | "text"
+                )
+        })
     }
 }
 
@@ -460,6 +500,24 @@ impl ffi::PlayerController {
 
     fn audio_delay(&self) -> f64 {
         self.audio_delay
+    }
+
+    fn subtitle_position(&self) -> f64 {
+        self.subtitle_position
+    }
+
+    fn subtitle_text(&self) -> QString {
+        if !self.subtitle_movable()
+            || !self.subtitle_visible
+            || self.subtitle_text.trim().is_empty()
+        {
+            return QString::default();
+        }
+        QString::from(self.subtitle_text.as_str())
+    }
+
+    fn subtitle_movable(&self) -> bool {
+        self.media_loaded() && self.supports_subtitle_position()
     }
 
     fn applied_audio_delay(&self) -> f64 {
@@ -554,6 +612,7 @@ impl ffi::PlayerController {
                 state.language = QString::from(settings.language);
                 state.appearance = QString::from(settings.appearance);
                 state.audio_delay = settings.audio_delay;
+                state.subtitle_position = settings.subtitle_position;
                 state.gpu.shader_choice =
                     crate::gpu::shaders::ShaderChoice::from_id(&settings.shader).unwrap();
                 state.gpu.content_choice =
@@ -595,12 +654,53 @@ impl ffi::PlayerController {
         }
     }
 
+    fn preview_subtitle_position(mut self: Pin<&mut Self>, position: f64) {
+        if !self.subtitle_movable() || !position.is_finite() || !(0.0..=100.0).contains(&position) {
+            return;
+        }
+        let position = (position * 10.0).round() / 10.0;
+        if (self.subtitle_position - position).abs() < 0.1 {
+            return;
+        }
+        self.as_mut().rust_mut().subtitle_position = position;
+        self.as_mut()
+            .dispatch(&["set", "sub-pos", &position.to_string()]);
+        self.as_mut().state_changed();
+    }
+
+    fn commit_subtitle_position(mut self: Pin<&mut Self>) {
+        if self.media_loaded() {
+            self.as_mut().save_preferences();
+        }
+    }
+
+    fn cancel_subtitle_position(mut self: Pin<&mut Self>, position: f64) {
+        if !position.is_finite() || !(0.0..=100.0).contains(&position) {
+            return;
+        }
+        self.as_mut().rust_mut().subtitle_position = position;
+        self.as_mut().apply_selected_subtitle_position();
+        self.as_mut().state_changed();
+    }
+
+    fn reset_subtitle_position(mut self: Pin<&mut Self>) {
+        if !self.subtitle_movable()
+            || (self.subtitle_position - DEFAULT_SUBTITLE_POSITION).abs() < 0.1
+        {
+            return;
+        }
+        self.as_mut().rust_mut().subtitle_position = DEFAULT_SUBTITLE_POSITION;
+        self.as_mut().dispatch(&["set", "sub-pos", "85"]);
+        self.as_mut().save_preferences();
+    }
+
     fn save_preferences(mut self: Pin<&mut Self>) {
         if let Some(path) = self.settings_path.clone() {
             let settings = Preferences {
                 language: self.language.to_string(),
                 appearance: self.appearance.to_string(),
                 audio_delay: self.audio_delay,
+                subtitle_position: self.subtitle_position,
                 shader: self.gpu.shader_choice.id().into(),
                 content: self.gpu.content_choice.id().into(),
                 framegen: self.gpu.framegen_choice.id().into(),

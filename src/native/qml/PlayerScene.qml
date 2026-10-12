@@ -57,6 +57,65 @@ Item {
         onClicked: root.backend.togglePause()
     }
 
+    TextMetrics {
+        id: subtitleMeasure
+        font.family: "Arial"
+        font.pixelSize: Math.round(root.height * 0.045)
+        text: root.backend.subtitleText.split("\n").reduce((longest, line) => line.length > longest.length ? line : longest, "")
+    }
+
+    Item {
+        id: subtitleDrag
+        visible: root.backend.subtitleText.length > 0 && !root.settingsOpen && !openMenu.opened && !playbackMenu.opened
+        width: Math.min(root.width - 48, Math.max(80, subtitleMeasure.advanceWidth + 36))
+        height: subtitleMeasure.height * Math.min(4, root.backend.subtitleText.split("\n").length) + 16
+        x: (root.width - width) / 2
+        y: Math.max(0, Math.min(root.height - height, root.height * root.backend.subtitlePosition / 100 - height * 1.35))
+
+        MouseArea {
+            id: subtitleMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: pressed && dragged ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+            property real pressY: 0
+            property real startPosition: 0
+            property real pendingPosition: 0
+            property bool dragged: false
+
+            onPressed: mouse => {
+                pressY = mapToItem(root, mouse.x, mouse.y).y;
+                startPosition = root.backend.subtitlePosition;
+                pendingPosition = startPosition;
+                dragged = false;
+            }
+            onPositionChanged: mouse => {
+                if (!pressed)
+                    return;
+                const delta = mapToItem(root, mouse.x, mouse.y).y - pressY;
+                if (!dragged && Math.abs(delta) < 8)
+                    return;
+                dragged = true;
+                const minimum = subtitleDrag.height * 1.35 / root.height * 100;
+                pendingPosition = Math.max(minimum, Math.min(100, startPosition + delta / root.height * 100));
+                root.backend.previewSubtitlePosition(pendingPosition);
+            }
+            onReleased: {
+                if (dragged) {
+                    root.backend.previewSubtitlePosition(pendingPosition);
+                    root.backend.commitSubtitlePosition();
+                }
+            }
+            onCanceled: {
+                if (dragged)
+                    root.backend.cancelSubtitlePosition(startPosition);
+            }
+            onClicked: {
+                if (!dragged)
+                    root.backend.togglePause();
+            }
+        }
+    }
+
     Timer {
         id: hideTimer
         interval: 2200

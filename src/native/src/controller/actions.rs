@@ -55,6 +55,7 @@ impl ffi::PlayerController {
                 state.position = 0.0;
                 state.duration = 0.0;
                 state.title = QString::default();
+                state.subtitle_text.clear();
                 state.error_text = QString::default();
                 state.audio_tracks.pin_mut().update(Vec::new());
                 state.subtitle_tracks.pin_mut().update(Vec::new());
@@ -158,6 +159,7 @@ impl ffi::PlayerController {
         state.pending_commands.clear();
         state.state = ffi::State::Stopped;
         state.title = QString::default();
+        state.subtitle_text.clear();
         state.audio_tracks.pin_mut().update(Vec::new());
         state.subtitle_tracks.pin_mut().update(Vec::new());
         self.as_mut().dispatch(&["stop"]);

@@ -22,6 +22,8 @@ impl ffi::PlayerController {
                 Event::Property(name, value) => self.as_mut().apply_property(&name, value),
                 Event::StartFile => {
                     self.as_mut().rust_mut().file_loaded = false;
+                    self.as_mut().rust_mut().subtitle_text.clear();
+                    self.as_mut().dispatch(&["set", "sub-pos", "100"]);
                 }
                 Event::FileLoaded => {
                     if self.launch.ipc {
@@ -35,6 +37,7 @@ impl ffi::PlayerController {
                 }
                 Event::EndFile(error) => {
                     self.as_mut().rust_mut().file_loaded = false;
+                    self.as_mut().rust_mut().subtitle_text.clear();
                     if error < 0
                         && (self.launch.ipc || self.media.as_ref() == Some(&self.observed_path))
                     {
@@ -75,6 +78,7 @@ impl ffi::PlayerController {
                     let mut state = self.as_mut().rust_mut();
                     state.engine_ready = false;
                     state.file_loaded = false;
+                    state.subtitle_text.clear();
                     state.session = None;
                     state.state = ffi::State::Stopped;
                     self.as_mut().shutdown_requested();
@@ -122,6 +126,21 @@ impl ffi::PlayerController {
             ("options/sid", PropertyValue::Text(selection)) => {
                 self.as_mut().rust_mut().subtitle_selection = QString::from(selection)
             }
+            ("sub-text", PropertyValue::Text(text)) => {
+                let text =
+                    if text.chars().take(513).count() <= 512 && text.lines().take(5).count() <= 4 {
+                        text
+                    } else {
+                        String::new()
+                    };
+                self.as_mut().rust_mut().subtitle_text = text;
+            }
+            ("sub-text", PropertyValue::Unavailable) => {
+                self.as_mut().rust_mut().subtitle_text.clear();
+            }
+            ("sub-visibility", PropertyValue::Flag(visible)) => {
+                self.as_mut().rust_mut().subtitle_visible = visible;
+            }
             ("pause", PropertyValue::Flag(paused)) => {
                 self.as_mut().rust_mut().paused = paused;
             }
@@ -154,6 +173,7 @@ impl ffi::PlayerController {
                         let mut state = self.as_mut().rust_mut();
                         state.audio_tracks.pin_mut().update(audio);
                         state.subtitle_tracks.pin_mut().update(subtitles);
+                        self.as_mut().apply_selected_subtitle_position();
                     }
                     Err(error) => self.as_mut().fail(format!("Read media tracks: {error}")),
                 }
@@ -164,5 +184,14 @@ impl ffi::PlayerController {
             }
             _ => {}
         }
+    }
+
+    pub(super) fn apply_selected_subtitle_position(mut self: Pin<&mut Self>) {
+        let position = if self.supports_subtitle_position() {
+            self.subtitle_position.to_string()
+        } else {
+            "100".into()
+        };
+        self.as_mut().dispatch(&["set", "sub-pos", &position]);
     }
 }
