@@ -1,5 +1,7 @@
 #include <cstdio>
+#include <exception>
 
+#include <QByteArray>
 #include <QDir>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -22,12 +24,18 @@ int main(int argc, char *argv[])
 
     QString media;
     QString profile;
+    bool versionJson = false;
+    bool runtimeInfoJson = false;
     const QStringList arguments = app.arguments();
     for (int i = 1; i < arguments.size(); ++i)
     {
         const QString &argument = arguments.at(i);
         if (argument.startsWith(QStringLiteral("--profile-dir=")))
             profile = argument.sliced(14);
+        else if (argument == QStringLiteral("--version-json"))
+            versionJson = true;
+        else if (argument == QStringLiteral("--runtime-info-json"))
+            runtimeInfoJson = true;
         else if (argument.startsWith(u'-') || !media.isEmpty())
         {
             std::fprintf(stderr, "Expected at most one media file and optional --profile-dir.\n");
@@ -35,6 +43,11 @@ int main(int argc, char *argv[])
         }
         else
             media = argument;
+    }
+    if ((versionJson && runtimeInfoJson) || ((versionJson || runtimeInfoJson) && !media.isEmpty()))
+    {
+        std::fprintf(stderr, "Metadata query cannot include media or another query.\n");
+        return 2;
     }
     app.setApplicationName(QStringLiteral("qplay"));
     app.setWindowIcon(QIcon(QStringLiteral(":/assets/qplay.ico")));
@@ -55,6 +68,34 @@ int main(int argc, char *argv[])
     {
         configuration = QDir(profile).absoluteFilePath(QStringLiteral("config"));
         profile = QDir(profile).absoluteFilePath(QStringLiteral("data"));
+    }
+
+    if (versionJson || runtimeInfoJson)
+    {
+        try
+        {
+            rust::String output;
+            if (runtimeInfoJson)
+            {
+                const QByteArray libraryUtf8 = library.toUtf8();
+                const QByteArray profileUtf8 = profile.toUtf8();
+                const QByteArray configurationUtf8 = configuration.toUtf8();
+                output = Qplay::runtime_info_json(
+                    rust::Str(libraryUtf8.constData(), libraryUtf8.size()),
+                    rust::Str(profileUtf8.constData(), profileUtf8.size()),
+                    rust::Str(configurationUtf8.constData(), configurationUtf8.size()));
+            }
+            else
+                output = Qplay::version_json();
+            std::fwrite(output.data(), 1, output.size(), stdout);
+            std::fputc('\n', stdout);
+            return 0;
+        }
+        catch (const std::exception &error)
+        {
+            std::fprintf(stderr, "%s\n", error.what());
+            return 1;
+        }
     }
 
     int result;

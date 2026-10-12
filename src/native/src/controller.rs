@@ -51,6 +51,8 @@ pub mod ffi {
     }
 
     extern "Rust" {
+        fn version_json() -> String;
+        fn runtime_info_json(library: &str, data: &str, config: &str) -> Result<String>;
         type StartTask;
         type RetiredSession;
         fn run_start_task(task: Box<StartTask>);
@@ -69,6 +71,8 @@ pub mod ffi {
         #[qproperty(State, state, READ = state, NOTIFY = state_changed)]
         #[qproperty(bool, engine_ready, cxx_name = "engineReady", READ = engine_ready, NOTIFY = state_changed)]
         #[qproperty(bool, media_loaded, cxx_name = "mediaLoaded", READ = media_loaded, NOTIFY = state_changed)]
+        #[qproperty(bool, online_waiting, cxx_name = "onlineWaiting", READ = online_waiting, NOTIFY = state_changed)]
+        #[qproperty(i32, online_progress, cxx_name = "onlineProgress", READ = online_progress, NOTIFY = state_changed)]
         #[qproperty(bool, paused, READ = paused, NOTIFY = state_changed)]
         #[qproperty(bool, muted, READ = muted, NOTIFY = state_changed)]
         #[qproperty(f64, position, READ = position, NOTIFY = state_changed)]
@@ -95,6 +99,10 @@ pub mod ffi {
         fn engine_ready(&self) -> bool;
         #[cxx_name = "mediaLoaded"]
         fn media_loaded(&self) -> bool;
+        #[cxx_name = "onlineWaiting"]
+        fn online_waiting(&self) -> bool;
+        #[cxx_name = "onlineProgress"]
+        fn online_progress(&self) -> i32;
         fn paused(&self) -> bool;
         fn muted(&self) -> bool;
         fn position(&self) -> f64;
@@ -183,9 +191,21 @@ pub mod ffi {
     impl cxx_qt::Threading for PlayerController {}
 }
 
+fn version_json() -> String {
+    crate::runtime_info::version_json()
+}
+
+fn runtime_info_json(library: &str, data: &str, config: &str) -> Result<String, String> {
+    crate::runtime_info::runtime_info_json(library, data, config)
+}
+
 pub struct PlayerControllerRust {
     session: Option<Arc<Session>>,
     startup_cancel: Option<Arc<AtomicBool>>,
+    online_command: Option<u64>,
+    online_ready: bool,
+    online_progress: i32,
+    online_error: Option<String>,
     generation: u64,
     surface_ready: bool,
     media: Option<String>,
@@ -220,6 +240,10 @@ impl Default for PlayerControllerRust {
         Self {
             session: None,
             startup_cancel: None,
+            online_command: None,
+            online_ready: false,
+            online_progress: -1,
+            online_error: None,
             generation: 0,
             surface_ready: false,
             media: None,
@@ -270,6 +294,17 @@ impl ffi::PlayerController {
 
     fn media_loaded(&self) -> bool {
         self.file_loaded && self.media.as_ref() == Some(&self.observed_path)
+    }
+
+    fn online_waiting(&self) -> bool {
+        self.media
+            .as_ref()
+            .is_some_and(|media| yt_dlp::is_youtube_url(media))
+            && !self.online_ready
+    }
+
+    fn online_progress(&self) -> i32 {
+        self.online_progress
     }
 
     fn paused(&self) -> bool {

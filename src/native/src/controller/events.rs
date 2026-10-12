@@ -31,6 +31,25 @@ impl ffi::PlayerController {
                     }
                 }
                 Event::Command(id, error) => {
+                    if self.online_command == Some(id) {
+                        self.as_mut().rust_mut().online_command = None;
+                        if error < 0 {
+                            let error =
+                                format!("Configure online playback: {}", session.error(error));
+                            self.as_mut().rust_mut().online_error = Some(error.clone());
+                            if self.online_waiting() {
+                                self.as_mut().fail(error);
+                            }
+                        } else {
+                            let waiting = self.online_waiting();
+                            let mut state = self.as_mut().rust_mut();
+                            state.online_ready = true;
+                            if waiting {
+                                self.as_mut().load_pending_media();
+                            }
+                        }
+                        continue;
+                    }
                     let known = self.as_mut().rust_mut().pending_commands.remove(&id);
                     if known && error < 0 {
                         self.as_mut().fail(session.error(error));

@@ -85,10 +85,10 @@ qt_add_resources(qplay-native "app_icon"
     FILES assets/qplay.ico
 )
 target_link_libraries(qplay-native
-    PRIVATE qplay_views qplay_viewsplugin qplay_native qplay_player_plugin Qt::QuickDialogs2
+    PRIVATE qplay_views qplay_viewsplugin qplay_native qplay_player_plugin Qt::QuickDialogs2 bcrypt
 )
 
 qt_add_executable(qplay-native-acceptance WIN32 tests/native/player.cpp)
 target_link_libraries(qplay-native-acceptance
-    PRIVATE qplay_views qplay_viewsplugin qplay_native qplay_player_plugin
+    PRIVATE qplay_views qplay_viewsplugin qplay_native qplay_player_plugin bcrypt
 )
