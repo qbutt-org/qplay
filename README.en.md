@@ -44,13 +44,13 @@ Run **qplay-setup.exe**. qplay supports Windows 10 version 2004 or later and Win
 
 For the portable version, extract **qplay-portable.zip** and run `qplay.exe`.
 
-Open a media file in qplay, drag it into the window, or paste a direct URL into the start window. qplay appears in the Windows **Open with** menu for common video and audio formats. It does not replace your chosen default player.
+Open a media file or a direct URL in the player window. qplay appears in the Windows **Open with** menu for common video and audio formats. It does not change your default player.
 
 ## Controls and image quality
 
-Image processing is available from the FX menu. Upscaling and frame generation use the GPU; available modes and performance depend on the hardware.
+The settings button at the bottom right opens audio tracks, subtitles, and playback speed. Image processing and frame generation are available there too. Their availability depends on the GPU and video.
 
-Click the subtitle button to select a track or turn subtitles off. Choose **Move subtitles**, drag the position slider handle, then click **Done**. The player remembers the position when you reopen it. **Automatic subtitle position** restores the default placement. Movement is limited for ASS subtitles with authored coordinates.
+You can turn subtitles off, choose a track from the video, or add a separate subtitle file. The player remembers where you stopped and resumes when you reopen the video.
 
 Basic playback works offline from the installed bundle. GPU modes may automatically download and prepare additional components.
 
@@ -64,28 +64,26 @@ Basic playback works offline from the installed bundle. GPU modes may automatica
 
 The installed version stores settings in `%APPDATA%\qplay`, and caches and prepared GPU components in `%LOCALAPPDATA%\qplay`. The portable version uses the `userdata` folder next to the app. Existing mpv and mpv.net settings are not replaced.
 
-Settings include language, resuming from the last position, and automatic frame generation. Updates are checked there too: the installed version downloads a verified EXE, while the portable version offers a new archive.
-
-qplay accepts ordinary mpv options. The player controls the paths to its engine and its own profile.
+Advanced settings include language, appearance, and a persistent audio delay relative to video. Your image processing choice survives a restart.
 
 ## Development
 
-Windows launcher sources are in `src/`; the prepared player profile is in `profile/`. Pinned dependencies and runtime provenance are recorded in `upstream-lock.json`.
+The native player lives in `src/native/`. QML owns the interface; Rust owns the libmpv session and settings. Pinned dependencies and runtime provenance are recorded in `upstream-lock.json`.
 
-The local build uses Bun 1.4.2 and the built-in .NET Framework compiler. The .NET SDK is not required. Release validation used the following command; substitute your paths to the pinned runtime archive and Inno Setup 6.7.3 `ISCC.exe`:
+Local builds require Qt 6.12, CMake, MSVC, the Rust toolchain from `rust-toolchain.toml`, and Bun. Configure the CMake build, then run this from Developer PowerShell with your build directory and Inno Setup 6.7.3:
 
 ```powershell
-bun scripts/build.ts --runtime-archive "C:\build\qplay-1.0.0-runtime.zip" --installer-compiler "C:\tools\Inno Setup 6\ISCC.exe"
+bun scripts/build.ts --native-build "C:\build\qplay-native" --installer-compiler "C:\tools\Inno Setup 6\ISCC.exe"
 ```
 
-The script verifies the runtime SHA-256 hash and creates the installer and portable archive in `%TEMP%\qplay-build`; use `--output` for another directory. `bun run build` can prepare dependencies automatically, but the Inno Setup bootstrap in that mode has not been validated yet.
+The script checks the native build source revision, rebuilds changed files, verifies the pinned runtime, deploys Qt/QML, and creates the installer and portable archive in `%TEMP%\qplay-build`. Use `--runtime-archive` for a downloaded archive and `--output` for another result directory.
 
-`qplay.exe --version-json` and `qplay.exe --runtime-info-json` return integration metadata. The launcher stays alive until its engine exits and owns the engine's lifecycle. The calling app supplies media and playback options.
+`qplay.exe --version-json` and `qplay.exe --runtime-info-json` return integration metadata. The player accepts a file path or URL as one argument.
 
 See the [project rules](AGENTS.md).
 
 ## Licenses and provenance
 
-The bundle includes ModernX, Lua scripts, shaders, and media dependencies with their authors' notices preserved. Licenses are in [licenses/](licenses/), and qplay source terms are in [LICENSE](LICENSE).
+The bundle includes the Qt interface, shaders, and media dependencies with their authors' notices. Licenses are in [licenses/](licenses/), and qplay source terms are in [LICENSE](LICENSE).
 
 qplay sources are available in this repository. Complete media engine and dependency sources for version 1.0.0 are published in a [separate technical release](https://github.com/qbutt-org/qplay/releases/tag/v1.0.0-sources).

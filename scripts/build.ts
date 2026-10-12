@@ -8,6 +8,7 @@ import { parseArgs } from "node:util";
 const root = resolve(import.meta.dir, "..");
 const { values } = parseArgs({ options: {
     output: { type: "string", default: join(tmpdir(), "qplay-build") },
+    "native-build": { type: "string" },
     "runtime-archive": { type: "string" },
     "installer-compiler": { type: "string" },
 } });
@@ -18,9 +19,18 @@ const version = (await readFile(join(root, "qplay-version.txt"), "utf8")).trim()
 if (!/^\d+\.\d+\.\d+$/.test(version))
     throw new Error("Invalid qplay version.");
 const lock = JSON.parse(await readFile(join(root, "upstream-lock.json"), "utf8"));
+const nativeBuild = values["native-build"] ? resolve(values["native-build"]) : join(output, "native-build");
+const cmakeCache = await readFile(join(nativeBuild, "CMakeCache.txt"), "utf8");
+const configuredSource = cmakeCache.match(/^CMAKE_HOME_DIRECTORY:INTERNAL=(.+)$/m)?.[1];
+const qtCmake = cmakeCache.match(/^Qt6_DIR:PATH=(.+)$/m)?.[1];
+if (!configuredSource || !qtCmake)
+    throw new Error("The native build is not configured with Qt 6.12.");
+const qtBin = resolve(qtCmake, "../../..", "bin");
+const windeployqt = join(qtBin, "windeployqt.exe");
+if (!await Bun.file(windeployqt).exists())
+    throw new Error(`Qt deployment tool is missing: ${windeployqt}`);
 await mkdir(output, { recursive: true });
 output = await realpath(output);
-const stage = await realpath(await mkdtemp(join(output, ".stage-")));
 
 async function hash(path: string): Promise<string> {
     const digest = createHash("sha256");
@@ -34,6 +44,42 @@ async function run(command: string[], cwd = root): Promise<void> {
     if (await process.exited !== 0)
         throw new Error(`Build command failed: ${basename(command[0])}`);
 }
+
+async function outputOf(command: string[], cwd = root): Promise<string> {
+    const process = Bun.spawn(command, { cwd, windowsHide: true, stdout: "pipe", stderr: "inherit" });
+    const output = await new Response(process.stdout).text();
+    if (await process.exited !== 0)
+        throw new Error(`Command failed: ${basename(command[0])}`);
+    return output.trim();
+}
+
+const sourceRevision = await outputOf(["git", "rev-parse", "HEAD"]);
+const nativeSourceRevision = await outputOf(["git", "rev-parse", "HEAD"], configuredSource);
+const nativePaths = ["CMakeLists.txt", "src/native", "assets/icons", "assets/qplay.ico", "qplay-version.txt"];
+for (const source of [root, configuredSource]) {
+    const changes = await outputOf(["git", "status", "--porcelain", "--", ...nativePaths], source);
+    if (changes)
+        throw new Error(`Player sources contain uncommitted changes: ${source}`);
+}
+for (const path of nativePaths) {
+    const packaged = await outputOf(["git", "rev-parse", `HEAD:${path}`]);
+    const compiled = await outputOf(["git", "rev-parse", `HEAD:${path}`], configuredSource);
+    if (packaged !== compiled)
+        throw new Error(`The native build differs from packaged player source: ${path}`);
+}
+const qtVersion = await outputOf([join(qtBin, "qtpaths6.exe"), "--qt-version"]);
+if (qtVersion !== lock.qt.version)
+    throw new Error(`Qt ${qtVersion} differs from pinned ${lock.qt.version}.`);
+const manager = lock.nativeProfile.framegenManager;
+const managerSource = join(root, manager.path);
+if (await hash(managerSource) !== manager.sha256)
+    throw new Error("The frame generation manager differs from its native profile pin.");
+const committedManager = await outputOf(["git", "rev-parse", `${manager.binaryRevision}:${manager.path}`]);
+const bundledManager = await outputOf(["git", "hash-object", managerSource]);
+if (committedManager !== bundledManager)
+    throw new Error("The frame generation manager differs from its recorded binary revision.");
+await run(["cmake", "--build", nativeBuild, "--config", "Release", "--target", "qplay-native", "all_qmllint"]);
+const stage = await realpath(await mkdtemp(join(output, ".stage-")));
 
 async function verifiedDownload(path: string, pin: { url: string; sha256: string; size?: number }): Promise<void> {
     if (!await Bun.file(path).exists()) {
@@ -89,44 +135,51 @@ try {
     await rename(join(engine, "profile", "tools", "bin", "ffprobe.exe"), join(engine, "ffprobe.exe"));
     await rename(join(engine, "tools", "yt-dlp.exe"), join(engine, "yt-dlp.exe"));
     await rmdir(join(engine, "tools"));
-    await cp(join(root, "profile"), join(engine, "profile"), { recursive: true,
-        filter: path => !path.split(/[\\/]/).includes("target") });
+    const extractedProfile = await realpath(join(engine, "profile"));
+    if (dirname(extractedProfile) !== await realpath(engine))
+        throw new Error("The archive profile is outside the staged engine.");
+    await rm(extractedProfile, { recursive: true });
+    for (const item of [
+        "certs/cacert.pem",
+        "framegen",
+        "shaders",
+        "tools/bin/framegen-manager.exe",
+        "tools/bin/framegen-manager-THIRD-PARTY-NOTICES.txt",
+        "tools/bin/framegen-bootstrap.dll",
+        "tools/bin/framegen-bootstrap-THIRD-PARTY-NOTICES.txt",
+        "tools/bin/framegen-vsov.dll",
+        "tools/bin/Rust-Standard-Library-COPYRIGHT.html",
+    ]) {
+        const destination = join(engine, "profile", item);
+        await mkdir(dirname(destination), { recursive: true });
+        await cp(join(root, "profile", item), destination, { recursive: true });
+    }
     await cp(join(root, "licenses"), join(engine, "licenses"), { recursive: true });
     await cp(join(root, "LICENSE"), join(bundle, "LICENSE"));
     await cp(join(root, "upstream-lock.json"), join(bundle, "upstream-lock.json"));
     await cp(join(root, "assets/qplay.ico"), join(bundle, "qplay.ico"));
-    await writeFile(join(stage, "AssemblyInfo.cs"), [
-        "using System.Reflection;",
-        `[assembly: AssemblyVersion("${version}.0")]`,
-        `[assembly: AssemblyFileVersion("${version}.0")]`,
-        "[assembly: AssemblyProduct(\"qplay\")]",
-        "[assembly: AssemblyCompany(\"qbutt-org\")]",
-        "[assembly: AssemblyDescription(\"qplay media player\")]",
-        ""
-    ].join("\n"));
-    const compiler = join(process.env.SystemRoot || "C:/Windows", "Microsoft.NET/Framework64/v4.0.30319/csc.exe");
-    await run([compiler, "/nologo", "/target:winexe", "/platform:x64", "/optimize+", "/debug-",
-        "/reference:System.Windows.Forms.dll", "/reference:System.Drawing.dll", "/reference:System.Web.Extensions.dll",
-        "/reference:System.Net.Http.dll", `/win32icon:${join(root, "assets/qplay.ico")}`,
-        `/win32manifest:${join(root, "src/app.manifest")}`, `/out:${join(bundle, "qplay.exe")}`,
-        ...((await files(join(root, "src"))).filter(file => file.endsWith(".cs")).map(file => join(root, "src", file))),
-        join(stage, "AssemblyInfo.cs")]);
-    await writeFile(join(bundle, "qplay.exe.config"), '<?xml version="1.0"?><configuration><startup><supportedRuntime version="v4.0" sku=".NETFramework,Version=v4.8" /></startup></configuration>\n');
+    const nativeExecutable = join(nativeBuild, "qplay-native.exe");
+    if (!await Bun.file(nativeExecutable).exists())
+        throw new Error(`The native player is missing: ${nativeExecutable}`);
+    await cp(nativeExecutable, join(bundle, "qplay.exe"));
+    await run([windeployqt, "--release", "--qmldir", join(root, "src/native/qml"),
+        "--translations", "en,ru", "--no-compiler-runtime", join(bundle, "qplay.exe")]);
     const inventory: Record<string, string> = {};
     for (const member of await files(bundle))
         inventory[member] = await hash(join(bundle, member));
-    const revision = Bun.spawn(["git", "rev-parse", "HEAD"], { cwd: root, stdout: "pipe", stderr: "ignore" });
-    const sourceRevision = (await new Response(revision.stdout).text()).trim();
     const sourceStatus = Bun.spawn(["git", "status", "--porcelain"], { cwd: root, stdout: "pipe", stderr: "inherit" });
     const sourceWorktreeChanged = Boolean((await new Response(sourceStatus.stdout).text()).trim());
     if (await sourceStatus.exited !== 0)
         throw new Error("Could not record source state.");
     const manifest = {
         product: "qplay", version, protocolVersion: 1, platform: "windows-x64",
-        sourceRevision: await revision.exited === 0 ? sourceRevision : null,
+        sourceRevision,
+        nativeSourceRevision,
         sourceWorktreeChanged,
-        compiler: "Microsoft .NET Framework v4 C# compiler",
+        buildSystem: "CMake, CXX-Qt and Rust",
+        qtVersion,
         runtimeArchive: { url: lock.runtime.url, sha256: lock.runtime.sha256, size: lock.runtime.size },
+        framegenManager: { sha256: manager.sha256, binaryRevision: manager.binaryRevision },
         correspondingSources: lock.sourceArchive,
         files: inventory
     };
@@ -144,12 +197,14 @@ try {
         `/O${output}`, join(root, "dist/windows/qplay.iss")]);
     await writeFile(join(bundle, "qplay.portable"), "qplay portable profile: userdata/config and userdata/data\n");
     const portableArchive = join(output, "qplay-portable.zip");
-    await run(["tar.exe", "-a", "-cf", portableArchive, "-C", bundle, ...await files(bundle)]);
+    await run(["tar.exe", "-a", "-cf", portableArchive, "-C", bundle, "."]);
     const publishedBundle = join(output, "portable");
     if (await Bun.file(join(publishedBundle, "build-manifest.json")).exists()) {
         const old = JSON.parse(await readFile(join(publishedBundle, "build-manifest.json"), "utf8"));
         if (old.product !== "qplay")
             throw new Error("Refusing to replace an unowned portable output.");
+        if (dirname(await realpath(publishedBundle)) !== output)
+            throw new Error("Portable output is outside the build directory.");
         await rm(publishedBundle, { recursive: true });
     }
     await cp(bundle, publishedBundle, { recursive: true });

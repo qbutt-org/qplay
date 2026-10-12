@@ -2,20 +2,25 @@ qplay media components
 
 The exact runtime archive, file SHA256 values and source references are recorded
 in upstream-lock.json. The pinned mpv, FFmpeg, ffprobe and yt-dlp executables
-and prepared player profile are included in qplay's installer and portable
+and native player assets are included in qplay's installer and portable
 archive. No upstream installer is run. Updates require an intentional lock change.
+
+Qt 6.12.0
+  qplay distributes Qt Core, GUI, QML and Quick libraries and their required
+  plugins from the pinned Qt 6.12.0 Windows SDK. Qt is available under LGPL-3.0
+  or GPL-3.0; Qt-LGPL-3.0.txt accompanies this notice and qplay's LICENSE
+  contains GPL-3.0. The DLLs and plugins remain separately replaceable.
+  Source: https://download.qt.io/official_releases/qt/6.12/6.12.0/single/
+  Module and third-party license details:
+  https://doc.qt.io/qt-6/licenses-used-in-qt.html
 
 mpv
   Source: https://github.com/mpv-player/mpv/tree/b2c255c13e8e37952dbac6c34da56a690560378b
   The public qbutt 1.3.0 runtime supplies this build with its frozen MSYS2
   CLANG64 dependency closure. qplay retains these exact runtime binaries.
   Copyright and GPL/LGPL texts accompany this notice.
-  The profile retains mpv player/lua/select.lua, player/lua/console.lua and
-  etc/menu.conf from that same revision; their original hashes are recorded under
-  mpv.profileSources in upstream-lock.json and their license headers are preserved.
-  qplay adapts the sole menu producer for live RU/EN labels and its settings and
-  subtitle actions, removes unused OSC menu entries, and measures popup text in
-  rendered pixels. The corresponding built-in scripts are disabled.
+  qplay embeds libmpv in its Rust/CXX-Qt process. The original mpv executable is
+  also bundled for callers that discover it through --runtime-info-json.
   The source archive pinned below preserves the custom build recipe, exact source
   inputs, original MSYS2 PKGBUILDs and patches, package BUILDINFO/PKGINFO, source
   archives, VCS trees and Cargo dependencies for the linked runtime and static
@@ -52,27 +57,20 @@ HTTPS trust store
   mpv verifies HTTPS certificates and host names using this collection together
   with native Windows trust. Certificate verification remains enabled.
 
-ModernX and the shader profile
-  ModernX: https://github.com/zydezu/ModernX
-  Its mpv-osc-modern ancestor by maoiscat is published under LGPL-2.1:
-  https://github.com/maoiscat/mpv-osc-modern
-  That ancestor's exact license text is retained in
-  ModernX-ancestor-LGPL-2.1.txt. This attribution records the upstream lineage;
-  it does not assign a new license to the later ModernX forks.
-  Attribution in profile/scripts/modernx.lua is retained. The imported qbutt
-  adaptation replaced its independent downloader with a host queue request.
-  qplay exposes that optional integration through the qplay-download message;
-  standalone playback does not expose an unavailable download action.
+Player interface and shaders
+  The native interface uses Tabler Icons outline v3.49.0 under the MIT license.
+  Exact SVG provenance and the license are in assets/icons/UPSTREAM.txt and
+  assets/icons/LICENSE in the qplay source distribution.
   Anime4K and FSR shaders retain their individual license headers in shaders/.
-  Fluent System Icons: https://github.com/microsoft/fluentui-system-icons
-  Its MIT license accompanies this notice.
 
 qplay adaptations and corresponding sources
-  https://github.com/qbutt-org/qplay maintains the launcher, prepared profile,
+  https://github.com/qbutt-org/qplay maintains the native player, profile,
   changed manager/bootstrap sources, Cargo locks, package recipes and notices.
+  The manager binary's SHA256 and first qplay revision are pinned separately
+  from the original qbutt profile snapshot in upstream-lock.json.
   The public qbutt snapshot and original profile provenance are recorded under
-  importedFrom and profileSourceRevision in upstream-lock.json. Original imported
-  hashes record that baseline; build-manifest.json binds each qplay release to
+  importedFrom and importedProfileHashes in upstream-lock.json. Original imported
+  hashes record that baseline; build-manifest.json binds each qplay package to
   its actual modified files. Private repository history is not distributed.
   qplay supplies asynchronous read-only GPU selection and stores generated runtime
   data only in its own data directory. No global mpv profile, registry environment

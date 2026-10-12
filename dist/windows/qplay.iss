@@ -38,6 +38,42 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 Source: "{#BundleDir}\*"; DestDir: "{app}"; Excludes: "\qplay.portable,\userdata,\userdata\*"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+[InstallDelete]
+Type: files; Name: "{app}\qplay.exe.config"
+Type: files; Name: "{app}\engine\profile\fonts\fluent-system-icons.ttf"
+Type: files; Name: "{app}\engine\profile\input.conf"
+Type: files; Name: "{app}\engine\profile\menu.conf"
+Type: files; Name: "{app}\engine\profile\mpv.conf"
+Type: files; Name: "{app}\engine\profile\script-modules\framegen\catalog.lua"
+Type: files; Name: "{app}\engine\profile\script-modules\framegen\engine.lua"
+Type: files; Name: "{app}\engine\profile\script-modules\framegen\policy.lua"
+Type: files; Name: "{app}\engine\profile\script-modules\framegen\session_quality.lua"
+Type: files; Name: "{app}\engine\profile\script-modules\modernx\i18n.lua"
+Type: files; Name: "{app}\engine\profile\script-modules\modernx\layout.lua"
+Type: files; Name: "{app}\engine\profile\script-modules\modernx\shader_menu.lua"
+Type: files; Name: "{app}\engine\profile\script-modules\modernx\subtitles.lua"
+Type: files; Name: "{app}\engine\profile\script-modules\modernx\tooltip.lua"
+Type: files; Name: "{app}\engine\profile\script-modules\shader_presets\auto_select.lua"
+Type: files; Name: "{app}\engine\profile\script-modules\shader_presets\catalog.lua"
+Type: files; Name: "{app}\engine\profile\script-modules\video_profile\classifier.lua"
+Type: files; Name: "{app}\engine\profile\script-modules\video_profile\network_source.lua"
+Type: files; Name: "{app}\engine\profile\script-modules\video_profile\stream_selection.lua"
+Type: files; Name: "{app}\engine\profile\script-modules\video_profile\timing.lua"
+Type: files; Name: "{app}\engine\profile\script-opts\framegen.conf"
+Type: files; Name: "{app}\engine\profile\script-opts\modernx.conf"
+Type: files; Name: "{app}\engine\profile\script-opts\shader_presets.conf"
+Type: files; Name: "{app}\engine\profile\script-opts\video_profile.conf"
+Type: files; Name: "{app}\engine\profile\scripts\console.lua"
+Type: files; Name: "{app}\engine\profile\scripts\framegen.lua"
+Type: files; Name: "{app}\engine\profile\scripts\modernx.lua"
+Type: files; Name: "{app}\engine\profile\scripts\qplay_controls.lua"
+Type: files; Name: "{app}\engine\profile\scripts\qplay_runtime.lua"
+Type: files; Name: "{app}\engine\profile\scripts\select.lua"
+Type: files; Name: "{app}\engine\profile\scripts\shader_presets.lua"
+Type: files; Name: "{app}\engine\profile\scripts\video_profile.lua"
+Type: files; Name: "{app}\engine\profile\tools\hardware\DxgiGpuInfo.cs"
+Type: files; Name: "{app}\engine\profile\tools\hardware\shader-profile.ps1"
+
 [Icons]
 Name: "{autoprograms}\qplay"; Filename: "{app}\qplay.exe"; WorkingDir: "{app}"
 Name: "{autodesktop}\qplay"; Filename: "{app}\qplay.exe"; WorkingDir: "{app}"; Tasks: desktopicon
@@ -57,69 +93,18 @@ Root: HKA; Subkey: "Software\qbutt-org\qplay\Capabilities"; ValueType: string; V
 Root: HKA; Subkey: "Software\RegisteredApplications"; ValueType: string; ValueName: "qplay"; ValueData: "Software\qbutt-org\qplay\Capabilities"; Flags: uninsdeletevalue
 
 [Run]
-Filename: "{app}\qplay.exe"; Description: "{cm:LaunchProgram,qplay}"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent; Check: not IsUpdate
-Filename: "{app}\qplay.exe"; WorkingDir: "{app}"; Flags: nowait runascurrentuser; Check: IsUpdate
+Filename: "{app}\qplay.exe"; Description: "{cm:LaunchProgram,qplay}"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent
 
 [CustomMessages]
 english.PortableDirectory=This folder contains a portable qplay profile. Choose a different installation folder.
 russian.PortableDirectory=Эта папка содержит переносной профиль qplay. Выберите другую папку для установки.
-english.UpdateBusy=qplay is still closing. Try the update again after it exits.
-russian.UpdateBusy=qplay ещё закрывается. Повторите обновление после выхода из программы.
-english.UpdateInvalid=Could not verify this qplay update. Run the installer again.
-russian.UpdateInvalid=Не удалось проверить обновление qplay. Запустите установщик ещё раз.
 
 [Code]
-function OpenProcess(Access: LongWord; Inherit: LongWord; ProcessID: LongWord): THandle;
-    external 'OpenProcess@kernel32.dll stdcall';
-function QueryFullProcessImageName(Process: THandle; Flags: LongWord; Name: String; var Size: LongWord): Boolean;
-    external 'QueryFullProcessImageNameW@kernel32.dll stdcall';
-function WaitForSingleObject(Handle: THandle; Milliseconds: LongWord): LongWord;
-    external 'WaitForSingleObject@kernel32.dll stdcall';
-function CloseHandle(Handle: THandle): Boolean;
-    external 'CloseHandle@kernel32.dll stdcall';
-
-function IsUpdate: Boolean;
-begin
-    Result := ExpandConstant('{param:QPLAYUPDATE|}') <> '';
-end;
-
 function PrepareToInstall(var NeedsRestart: Boolean): String;
-var
-    Process: THandle;
-    Size: LongWord;
-    ProcessPath: String;
 begin
     Result := '';
     if FileExists(ExpandConstant('{app}\qplay.portable')) then
-    begin
         Result := CustomMessage('PortableDirectory');
-        Exit;
-    end;
-    if not IsUpdate then
-        Exit;
-    Result := CustomMessage('UpdateInvalid');
-    Process := OpenProcess($100000 or $1000, 0, StrToIntDef(ExpandConstant('{param:QPLAYUPDATE|}'), 0));
-    if Process = 0 then
-    begin
-        { The launcher may have already completed its normal shutdown. }
-        Result := '';
-        Exit;
-    end;
-    try
-        Size := 32768;
-        SetLength(ProcessPath, Size);
-        if not QueryFullProcessImageName(Process, 0, ProcessPath, Size) then
-            Exit;
-        SetLength(ProcessPath, Size);
-        if CompareText(ProcessPath, ExpandConstant('{app}\qplay.exe')) <> 0 then
-            Exit;
-        if WaitForSingleObject(Process, 120000) = 0 then
-            Result := ''
-        else
-            Result := CustomMessage('UpdateBusy');
-    finally
-        CloseHandle(Process);
-    end;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);

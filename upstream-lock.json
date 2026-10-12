@@ -1,26 +1,18 @@
 {
   "schemaVersion": 2,
-  "profileSourceRevision": "e6ebc69988dae0705a10bb4c9a3ccacd2f020205",
+  "qt": {
+    "version": "6.12.0"
+  },
+  "nativeProfile": {
+    "framegenManager": {
+      "path": "profile/tools/bin/framegen-manager.exe",
+      "sha256": "93c3c26ceae4e2dce0d1cb255e74b24609150002764314498254456232683d45",
+      "binaryRevision": "afd4311b143464681176f3320d526fe23c86fc7f"
+    }
+  },
   "mpv": {
     "version": "0.41.0-gb2c255c13-qbutt",
-    "source": "https://github.com/mpv-player/mpv/tree/b2c255c13e8e37952dbac6c34da56a690560378b",
-    "profileSources": [
-      {
-        "path": "profile/scripts/select.lua",
-        "sourcePath": "player/lua/select.lua",
-        "sha256": "5f95da1a21a03ec45106e7ca6976f11f16eaa66215b09d16254fc615080075a5"
-      },
-      {
-        "path": "profile/scripts/console.lua",
-        "sourcePath": "player/lua/console.lua",
-        "sha256": "1b9b73e24350a1567b057e74b2099894e68636d75040e33133dce9e0b9b9a1c1"
-      },
-      {
-        "path": "profile/menu.conf",
-        "sourcePath": "etc/menu.conf",
-        "sha256": "ec8070a1d56814f238b18e24967f0c0fef6cb81d50036e2c7b5276fe7b6015de"
-      }
-    ]
+    "source": "https://github.com/mpv-player/mpv/tree/b2c255c13e8e37952dbac6c34da56a690560378b"
   },
   "ffmpeg": {
     "version": "9.0.2-6",

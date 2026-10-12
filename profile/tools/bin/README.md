@@ -1,6 +1,6 @@
 # Media tools
 
-`scripts/build.ts` bundles the pinned mpv, FFmpeg, ffprobe and yt-dlp executables with the qplay profile and verifies archives and files against `upstream-lock.json`. The qplay launcher verifies the complete immutable payload against `build-manifest.json` before playback or runtime discovery. Neither path runs upstream installers or uses media tools from PATH.
+`scripts/build.ts` bundles the pinned mpv, FFmpeg, ffprobe and yt-dlp executables with the native qplay profile and verifies archives and files against `upstream-lock.json`. Native `--runtime-info-json` verifies the immutable bundle against `build-manifest.json` before returning tool paths. Neither path runs upstream installers or uses media tools from PATH.
 
 `ffprobe.exe` is used for video analysis and shader benchmarks. The pinned MSYS2 CLANG64 FFmpeg 9.0.2-6 package supplies both FFmpeg and ffprobe. Packaging places these tools and yt-dlp beside their shared DLLs at `engine/`, so callers can execute the discovered absolute paths without changing their working directory or PATH. Player supplies the verified probe path through `QPLAY_FFPROBE`. Original package licenses are retained under `engine/licenses/msys2`; exact package recipes, patches, source archives and dependency sources are in the public source archive pinned by `upstream-lock.json` and identified in `licenses/NOTICE.txt`.
 
