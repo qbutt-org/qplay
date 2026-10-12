@@ -32,7 +32,10 @@ impl ffi::PlayerController {
                             self.as_mut().rust_mut().observed_path = path;
                         }
                     }
-                    self.as_mut().rust_mut().file_loaded = true;
+                    let mut state = self.as_mut().rust_mut();
+                    state.file_loaded = true;
+                    state.error_text = QString::default();
+                    state.state = ffi::State::Loading;
                     self.as_mut().begin_gpu_probe();
                 }
                 Event::EndFile(error) => {
