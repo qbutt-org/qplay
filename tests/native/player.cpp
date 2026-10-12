@@ -581,6 +581,14 @@ int main(int argc, char *argv[])
                     && restored.framegenChoice() == QStringLiteral("off"),
                     "Manual GPU choices were not saved together");
                 evidence[QStringLiteral("manualGpuChoicesPersisted")] = true;
+                backend.changeFramegen(QStringLiteral("auto"));
+                require(backend.shaderChoice() == QStringLiteral("auto")
+                    && backend.framegenChoice() == QStringLiteral("auto"),
+                    "Automatic frame generation did not restore automatic shader choice");
+                backend.changeShader(QStringLiteral("anime4k_a"));
+                require(backend.framegenChoice() == QStringLiteral("off"),
+                    "Manual Anime4K did not disable automatic frame generation");
+                evidence[QStringLiteral("autoFramegenResolvedManualShader")] = true;
                 backend.changeFramegen(QStringLiteral("on"));
                 require(backend.shaderChoice() == QStringLiteral("fsr")
                     && backend.framegenChoice() == QStringLiteral("on"),
