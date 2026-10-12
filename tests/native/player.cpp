@@ -512,17 +512,18 @@ int main(int argc, char *argv[])
                 backend.changeShader(QStringLiteral("auto"));
                 backend.changeContent(QStringLiteral("movie"));
                 backend.changeFramegen(QStringLiteral("on"));
-                backend.openMedia(media);
+                backend.openMedia(secondMedia);
                 wait([&] { return backend.mediaLoaded(); }, "Frame generation video did not load");
                 if (!backend.paused())
                     backend.togglePause();
                 wait([&] { return backend.paused(); }, "Pause before graph preparation failed");
                 waitGpu([&] { return backend.framegenStatus() == QStringLiteral("prepared")
+                    || backend.framegenStatus() == QStringLiteral("starting")
                     || backend.framegenStatus() == QStringLiteral("active"); }, 30 * 60 * 1000,
                     "Frame generation graph preparation timed out");
                 if (backend.framegenStatus() == QStringLiteral("prepared"))
                 {
-                    backend.openMedia(media);
+                    backend.openMedia(secondMedia);
                     wait([&] { return backend.mediaLoaded(); }, "Prepared video did not reopen");
                 }
                 if (backend.paused())
@@ -593,7 +594,7 @@ int main(int argc, char *argv[])
                 require(backend.shaderChoice() == QStringLiteral("fsr")
                     && backend.framegenChoice() == QStringLiteral("on"),
                     "Manual frame generation did not select compatible FSR");
-                backend.openMedia(media);
+                backend.openMedia(secondMedia);
                 wait([&] { return backend.mediaLoaded(); }, "Frame generation did not reopen after manual shader");
                 waitGpu([&] { return backend.framegenStatus() == QStringLiteral("active"); },
                     2 * 60 * 1000, "Frame generation did not resume after manual Anime4K");
