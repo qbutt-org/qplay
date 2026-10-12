@@ -199,7 +199,7 @@ impl Manager {
         if !matches!(status.state, State::Ready) || !status.problems.is_empty() {
             return Ok(None);
         }
-        let metadata = fs::metadata(self.runtime_root.join("runtime-manifest.json"))
+        let metadata = fs::symlink_metadata(self.runtime_root.join("runtime-manifest.json"))
             .map_err(|error| format!("Inspect frame generation manifest: {error}"))?;
         if !metadata.is_file() || metadata.len() > MAX_MANIFEST_BYTES {
             return Err("The frame generation manifest has an invalid size.".into());

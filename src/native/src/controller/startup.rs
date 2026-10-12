@@ -229,6 +229,7 @@ impl ffi::PlayerController {
         state.pending_commands.clear();
         state.gpu_commands.clear();
         state.gpu.interlaced_seen = false;
+        state.gpu.video_signature = None;
         let library_path = PathBuf::from(library.to_string());
         state.gpu.engine_root = library_path.parent().map(PathBuf::from);
         state.gpu.player_data = Some(PathBuf::from(profile.to_string()));

@@ -32,8 +32,11 @@ pub struct GpuState {
     pub selection: Option<Selection>,
     pub filter: Option<String>,
     pub active_filter: Option<String>,
+    pub pending_manual_shader: bool,
     pub clock: Instant,
+    pub last_quality_poll: f64,
     pub interlaced_seen: bool,
+    pub video_signature: Option<String>,
     pub runtime: Option<Runtime>,
     pub timing: Option<Timing>,
     pub hardware: Option<HardwareProfile>,
@@ -57,8 +60,11 @@ impl Default for GpuState {
             selection: None,
             filter: None,
             active_filter: None,
+            pending_manual_shader: false,
             clock: Instant::now(),
+            last_quality_poll: 0.0,
             interlaced_seen: false,
+            video_signature: None,
             runtime: None,
             timing: None,
             hardware: None,
@@ -79,7 +85,9 @@ impl GpuState {
         self.quality = None;
         self.selection = None;
         self.filter = None;
+        self.pending_manual_shader = false;
         self.clock = Instant::now();
+        self.last_quality_poll = 0.0;
         self.runtime = None;
         self.timing = None;
         self.detected = ContentKind::Unknown;
@@ -89,19 +97,43 @@ impl GpuState {
 }
 
 pub enum GpuCommand {
-    Shader,
-    AddFilter { filter: String, generation: u64 },
-    RemoveFilter,
+    Shader {
+        preset: ShaderPreset,
+        generation: u64,
+    },
+    AddFilter {
+        filter: String,
+        generation: u64,
+    },
+    RemoveFilter {
+        apply_shader: bool,
+        generation: u64,
+    },
 }
 
 #[derive(Deserialize)]
 struct VideoTrack {
     #[serde(rename = "type")]
     kind: String,
+    #[serde(default)]
     selected: bool,
     #[serde(rename = "ff-index")]
     ff_index: Option<u32>,
     title: Option<String>,
+}
+
+pub(super) fn video_signature(json: &str) -> Option<String> {
+    let tracks: Vec<VideoTrack> = serde_json::from_str(json).ok()?;
+    tracks
+        .into_iter()
+        .find(|track| track.kind == "video" && track.selected)
+        .map(|track| {
+            format!(
+                "{}:{}",
+                track.ff_index.unwrap_or(0),
+                track.title.unwrap_or_default()
+            )
+        })
 }
 
 struct ProbeInput {
@@ -142,7 +174,7 @@ struct ProbeResult {
     error: Option<String>,
 }
 
-fn probe(input: ProbeInput, cancel: &AtomicBool) -> ProbeResult {
+fn probe(input: ProbeInput, cancel: &AtomicBool, on_prepare: impl FnOnce()) -> ProbeResult {
     let detected = input
         .local
         .as_ref()
@@ -198,6 +230,7 @@ fn probe(input: ProbeInput, cancel: &AtomicBool) -> ProbeResult {
         })
         && !input.interlaced
     {
+        on_prepare();
         let manager = Manager::new(&input.engine_root, &input.player_data);
         match manager.prepare(cancel) {
             Ok(runtime) => (Some(runtime), None),
@@ -277,9 +310,15 @@ fn probe(input: ProbeInput, cancel: &AtomicBool) -> ProbeResult {
 
 impl ffi::PlayerController {
     pub(super) fn cancel_gpu(mut self: Pin<&mut Self>) {
+        let generation = self.gpu.generation;
         if self.gpu.active_filter.is_some() || self.gpu.filter.is_some() {
-            self.as_mut()
-                .dispatch_gpu(&["vf", "remove", "@mpv-framegen"], GpuCommand::RemoveFilter);
+            self.as_mut().dispatch_gpu(
+                &["vf", "remove", "@mpv-framegen"],
+                GpuCommand::RemoveFilter {
+                    apply_shader: false,
+                    generation,
+                },
+            );
             self.as_mut().rust_mut().gpu.active_filter = None;
         }
         self.as_mut().rust_mut().gpu.cancel();
@@ -310,6 +349,8 @@ impl ffi::PlayerController {
             return;
         };
         let stream = video.ff_index.unwrap_or(0);
+        let title = video.title.unwrap_or_default();
+        self.as_mut().rust_mut().gpu.video_signature = Some(format!("{stream}:{title}"));
         let local = (!media.contains("://"))
             .then(|| PathBuf::from(media))
             .filter(|path| path.is_file());
@@ -318,7 +359,7 @@ impl ffi::PlayerController {
             local,
             duration: session.number("duration").unwrap_or(self.duration),
             stream,
-            stream_title: video.title.unwrap_or_default(),
+            stream_title: title,
             stream_filename: session.text("stream-open-filename"),
             ytdl_result: session.text("user-data/mpv/ytdl/json-subprocess-result"),
             http_headers: session
@@ -351,7 +392,15 @@ impl ffi::PlayerController {
         let thread = self.qt_thread();
         self.as_mut().rust_mut().gpu.cancel = Some(cancel.clone());
         std::thread::spawn(move || {
-            let result = probe(input, &cancel);
+            let progress_thread = thread.clone();
+            let result = probe(input, &cancel, || {
+                let _ = progress_thread.queue(move |mut player| {
+                    if player.gpu.generation == generation {
+                        player.as_mut().rust_mut().gpu.framegen_status = "loading".into();
+                        player.as_mut().state_changed();
+                    }
+                });
+            });
             if cancel.load(Ordering::Acquire) {
                 return;
             }
@@ -380,25 +429,30 @@ impl ffi::PlayerController {
         let Some(session) = self.session.clone() else {
             return;
         };
+        let generation = self.gpu.generation;
         let manual_non_fsr = matches!(self.gpu.shader_choice,
             ShaderChoice::Manual(preset) if preset != ShaderPreset::Fsr);
         if manual_non_fsr {
+            if self.gpu.pending_manual_shader {
+                return;
+            }
             if self.gpu.active_filter.is_some() || self.gpu.filter.is_some() {
-                self.as_mut()
-                    .dispatch_gpu(&["vf", "remove", "@mpv-framegen"], GpuCommand::RemoveFilter);
-                self.as_mut().rust_mut().gpu.active_filter = None;
-                self.as_mut().rust_mut().gpu.quality = None;
-                self.as_mut().rust_mut().gpu.filter = None;
+                self.as_mut().rust_mut().gpu.pending_manual_shader = true;
+                self.as_mut().dispatch_gpu(
+                    &["vf", "remove", "@mpv-framegen"],
+                    GpuCommand::RemoveFilter {
+                        apply_shader: true,
+                        generation,
+                    },
+                );
+                return;
             }
             self.as_mut().rust_mut().gpu.framegen_status = "off".into();
         } else if let Some(filter) = self.gpu.filter.clone() {
             if self.gpu.active_filter.as_ref() != Some(&filter) {
                 self.as_mut().dispatch_gpu(
                     &["vf", "add", &filter],
-                    GpuCommand::AddFilter {
-                        filter,
-                        generation: self.gpu.generation,
-                    },
+                    GpuCommand::AddFilter { filter, generation },
                 );
             }
         }
@@ -437,9 +491,13 @@ impl ffi::PlayerController {
         };
         match choice.mpv_value(quality, &shader_dir) {
             Ok(value) => {
-                self.as_mut().rust_mut().gpu.applied_shader = choice;
-                self.as_mut()
-                    .dispatch_gpu(&["set", "glsl-shaders", &value], GpuCommand::Shader);
+                self.as_mut().dispatch_gpu(
+                    &["set", "glsl-shaders", &value],
+                    GpuCommand::Shader {
+                        preset: choice,
+                        generation,
+                    },
+                );
             }
             Err(error) => self.as_mut().rust_mut().gpu.error = error,
         }
@@ -455,27 +513,58 @@ impl ffi::PlayerController {
                 self.as_mut().rust_mut().gpu_commands.insert(id, action);
             }
             Err(error) => {
-                self.as_mut().rust_mut().gpu.error = error;
+                let gpu = &mut self.as_mut().rust_mut().gpu;
+                if matches!(
+                    action,
+                    GpuCommand::RemoveFilter {
+                        apply_shader: true,
+                        ..
+                    }
+                ) {
+                    gpu.pending_manual_shader = false;
+                }
+                gpu.error = error;
                 self.as_mut().state_changed();
             }
         }
     }
 
     pub(super) fn gpu_command_complete(mut self: Pin<&mut Self>, action: GpuCommand, error: i32) {
-        if error < 0 && !matches!(&action, GpuCommand::RemoveFilter) {
+        let relevant = match &action {
+            GpuCommand::Shader { generation, .. } | GpuCommand::AddFilter { generation, .. } => {
+                *generation == self.gpu.generation
+            }
+            GpuCommand::RemoveFilter {
+                apply_shader,
+                generation,
+            } => *apply_shader && *generation == self.gpu.generation,
+        };
+        if error < 0 {
+            if !relevant {
+                return;
+            }
             let message = self
                 .session
                 .as_ref()
                 .map(|session| session.error(error))
                 .unwrap_or_default();
             self.as_mut().rust_mut().gpu.error = message;
-            self.as_mut().rust_mut().gpu.framegen_status = "error".into();
+            if !matches!(&action, GpuCommand::Shader { .. }) {
+                self.as_mut().rust_mut().gpu.framegen_status = "error".into();
+            }
+            self.as_mut().rust_mut().gpu.pending_manual_shader = false;
             return;
         }
         match action {
+            GpuCommand::Shader { preset, generation } if generation == self.gpu.generation => {
+                let gpu = &mut self.as_mut().rust_mut().gpu;
+                gpu.applied_shader = preset;
+                gpu.error.clear();
+            }
             GpuCommand::AddFilter { filter, generation } if generation == self.gpu.generation => {
                 self.as_mut().rust_mut().gpu.active_filter = Some(filter);
                 self.as_mut().rust_mut().gpu.framegen_status = "active".into();
+                self.as_mut().rust_mut().gpu.error.clear();
                 if let (Some(timing), Some(selection), Some(runtime), Some(session)) = (
                     self.gpu.timing,
                     self.gpu.selection,
@@ -491,7 +580,20 @@ impl ffi::PlayerController {
                     }
                 }
             }
-            GpuCommand::RemoveFilter => {}
+            GpuCommand::RemoveFilter {
+                apply_shader,
+                generation,
+            } => {
+                if apply_shader && generation == self.gpu.generation {
+                    let gpu = &mut self.as_mut().rust_mut().gpu;
+                    gpu.active_filter = None;
+                    gpu.filter = None;
+                    gpu.quality = None;
+                    gpu.pending_manual_shader = false;
+                    gpu.framegen_status = "off".into();
+                    self.as_mut().apply_gpu_policy();
+                }
+            }
             _ => {}
         }
     }
@@ -500,9 +602,13 @@ impl ffi::PlayerController {
         let Some(session) = self.session.clone() else {
             return;
         };
+        let generation = self.gpu.generation;
         let Some(selection) = self.gpu.selection else {
             return;
         };
+        if (self.speed - 1.0).abs() > 0.001 {
+            return;
+        }
         let present = session
             .text("vf")
             .is_some_and(|filters| filters.contains("mpv-framegen"));
@@ -517,6 +623,10 @@ impl ffi::PlayerController {
             return;
         }
         let now = self.gpu.clock.elapsed().as_secs_f64();
+        if now - self.gpu.last_quality_poll < 0.5 {
+            return;
+        }
+        self.as_mut().rust_mut().gpu.last_quality_poll = now;
         let count = |name: &str| session.number(name).unwrap_or(0.0).max(0.0) as u64;
         let sample = QualitySample {
             playback_position: session.number("time-pos").unwrap_or(0.0),
@@ -551,8 +661,13 @@ impl ffi::PlayerController {
             QualityAction::Keep => {}
             QualityAction::Lower => self.as_mut().lower_framegen(),
             QualityAction::DisableUntilNextVideo => {
-                self.as_mut()
-                    .dispatch_gpu(&["vf", "remove", "@mpv-framegen"], GpuCommand::RemoveFilter);
+                self.as_mut().dispatch_gpu(
+                    &["vf", "remove", "@mpv-framegen"],
+                    GpuCommand::RemoveFilter {
+                        apply_shader: false,
+                        generation,
+                    },
+                );
                 let gpu = &mut self.as_mut().rust_mut().gpu;
                 gpu.active_filter = None;
                 gpu.filter = None;
@@ -562,6 +677,7 @@ impl ffi::PlayerController {
     }
 
     fn lower_framegen(mut self: Pin<&mut Self>) {
+        let generation = self.gpu.generation;
         let (Some(runtime), Some(timing), Some(mut selection), Some(engine_root)) = (
             self.gpu.runtime.as_ref(),
             self.gpu.timing,
@@ -586,13 +702,18 @@ impl ffi::PlayerController {
             full_range,
         ) {
             Ok((filter, _)) => {
-                self.as_mut()
-                    .dispatch_gpu(&["vf", "remove", "@mpv-framegen"], GpuCommand::RemoveFilter);
+                self.as_mut().dispatch_gpu(
+                    &["vf", "remove", "@mpv-framegen"],
+                    GpuCommand::RemoveFilter {
+                        apply_shader: false,
+                        generation,
+                    },
+                );
                 self.as_mut().dispatch_gpu(
                     &["vf", "add", &filter],
                     GpuCommand::AddFilter {
                         filter: filter.clone(),
-                        generation: self.gpu.generation,
+                        generation,
                     },
                 );
                 let gpu = &mut self.as_mut().rust_mut().gpu;
@@ -611,14 +732,27 @@ impl ffi::PlayerController {
         };
         let manual_non_fsr =
             matches!(choice, ShaderChoice::Manual(preset) if preset != ShaderPreset::Fsr);
+        let had_filter = self.gpu.active_filter.is_some() || self.gpu.filter.is_some();
         if manual_non_fsr {
-            self.as_mut().cancel_gpu();
+            self.as_mut().rust_mut().gpu.cancel();
         }
         self.as_mut().rust_mut().gpu.shader_choice = choice;
         self.as_mut().save_preferences();
         if self.media_loaded() {
             if manual_non_fsr {
-                self.as_mut().apply_gpu_policy();
+                if had_filter {
+                    let generation = self.gpu.generation;
+                    self.as_mut().rust_mut().gpu.pending_manual_shader = true;
+                    self.as_mut().dispatch_gpu(
+                        &["vf", "remove", "@mpv-framegen"],
+                        GpuCommand::RemoveFilter {
+                            apply_shader: true,
+                            generation,
+                        },
+                    );
+                } else {
+                    self.as_mut().apply_gpu_policy();
+                }
             } else {
                 self.as_mut().begin_gpu_probe();
             }

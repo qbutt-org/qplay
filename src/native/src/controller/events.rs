@@ -133,6 +133,7 @@ impl ffi::PlayerController {
                 self.as_mut().apply_gpu_policy();
             }
             ("track-list", PropertyValue::Text(json)) => {
+                let signature = super::gpu::video_signature(&json);
                 match serde_json::from_str::<Vec<Track>>(&json) {
                     Ok(tracks) => {
                         let (audio, subtitles): (Vec<Track>, Vec<Track>) = tracks
@@ -144,6 +145,10 @@ impl ffi::PlayerController {
                         state.subtitle_tracks.pin_mut().update(subtitles);
                     }
                     Err(error) => self.as_mut().fail(format!("Read media tracks: {error}")),
+                }
+                if self.file_loaded && signature.is_some() && signature != self.gpu.video_signature
+                {
+                    self.as_mut().begin_gpu_probe();
                 }
             }
             _ => {}

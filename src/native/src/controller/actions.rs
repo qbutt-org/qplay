@@ -46,6 +46,7 @@ impl ffi::PlayerController {
                 let waiting = is_youtube_url(&media) && !self.online_ready;
                 let mut state = self.as_mut().rust_mut();
                 state.gpu.interlaced_seen = false;
+                state.gpu.video_signature = None;
                 state.media = Some(media);
                 state.online_progress = -1;
                 state.file_loaded = false;
@@ -80,6 +81,9 @@ impl ffi::PlayerController {
 
     pub(super) fn seek(mut self: Pin<&mut Self>, position: f64) {
         if self.media_loaded() && position.is_finite() && position >= 0.0 {
+            if let Some(quality) = self.as_mut().rust_mut().gpu.quality.as_mut() {
+                quality.filter_changed();
+            }
             self.as_mut()
                 .dispatch(&["seek", &position.to_string(), "absolute+exact"]);
         }
@@ -99,6 +103,9 @@ impl ffi::PlayerController {
 
     pub(super) fn change_speed(mut self: Pin<&mut Self>, speed: f64) {
         if speed.is_finite() && (0.25..=4.0).contains(&speed) {
+            if let Some(quality) = self.as_mut().rust_mut().gpu.quality.as_mut() {
+                quality.filter_changed();
+            }
             self.as_mut()
                 .dispatch(&["set", "speed", &speed.to_string()]);
         }

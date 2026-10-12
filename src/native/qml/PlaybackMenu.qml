@@ -16,7 +16,7 @@ Popup {
     readonly property string iconRoot: "qrc:/qt/qml/Qplay/Views/assets/icons/"
     readonly property string subtitleChoice: backend.subtitleSelection === "no" ? (russian ? qsTr("Выкл.") : qsTr("Off")) : backend.subtitleSelection === "auto" ? (russian ? qsTr("Авто") : qsTr("Auto")) : (russian ? qsTr("Дорожка %1") : qsTr("Track %1")).arg(backend.subtitleSelection)
     readonly property string audioChoice: backend.audioSelection === "auto" ? (russian ? qsTr("Авто") : qsTr("Auto")) : (russian ? qsTr("Дорожка %1") : qsTr("Track %1")).arg(backend.audioSelection)
-    readonly property string fxStatus: backend.framegenStatus === "active" ? (russian ? qsTr("Генерация кадров") : qsTr("Frame generation")) : backend.effectiveShader === "off" ? (russian ? qsTr("Выкл.") : qsTr("Off")) : backend.effectiveShader === "fsr" ? "FSR" : "Anime4K"
+    readonly property string fxStatus: backend.framegenStatus === "loading" ? (russian ? qsTr("Подготовка") : qsTr("Preparing")) : backend.framegenStatus === "active" ? (russian ? qsTr("Генерация кадров") : qsTr("Frame generation")) : backend.effectiveShader === "off" ? (russian ? qsTr("Выкл.") : qsTr("Off")) : backend.effectiveShader === "fsr" ? "FSR" : "Anime4K"
 
     signal advancedRequested
 
@@ -470,7 +470,11 @@ Popup {
                         Accessible.name: text
                         onClicked: root.backend.changeContent(modelData.id)
                         contentItem: RowLayout {
-                            Label { Layout.fillWidth: true; text: contentOption.text; color: "#ffffff" }
+                            Label {
+                                Layout.fillWidth: true
+                                text: contentOption.text
+                                color: "#ffffff"
+                            }
                             Image {
                                 visible: root.backend.contentChoice === contentOption.modelData.id
                                 source: root.iconRoot + "check.svg"
@@ -504,7 +508,11 @@ Popup {
                         Accessible.name: text
                         onClicked: root.backend.changeFramegen(modelData.id)
                         contentItem: RowLayout {
-                            Label { Layout.fillWidth: true; text: framegenOption.text; color: "#ffffff" }
+                            Label {
+                                Layout.fillWidth: true
+                                text: framegenOption.text
+                                color: "#ffffff"
+                            }
                             Image {
                                 visible: root.backend.framegenChoice === framegenOption.modelData.id
                                 source: root.iconRoot + "check.svg"
@@ -514,6 +522,16 @@ Popup {
                             }
                         }
                     }
+                }
+
+                Label {
+                    visible: root.backend.framegenStatus === "loading" || root.backend.framegenStatus === "prepared" || root.backend.framegenStatus === "guarded"
+                    Layout.fillWidth: true
+                    Layout.topMargin: 4
+                    wrapMode: Text.WordWrap
+                    text: root.backend.framegenStatus === "loading" ? (root.russian ? qsTr("Подготовка в фоне") : qsTr("Preparing in the background")) : root.backend.framegenStatus === "prepared" ? (root.russian ? qsTr("Готово для следующего видео") : qsTr("Ready for the next video")) : (root.russian ? qsTr("Недоступно для этого видео") : qsTr("Unavailable for this video"))
+                    color: "#b9bec4"
+                    font.pixelSize: 13
                 }
 
                 Label {
@@ -547,7 +565,11 @@ Popup {
                         Accessible.name: text
                         onClicked: root.backend.changeShader(modelData.id)
                         contentItem: RowLayout {
-                            Label { Layout.fillWidth: true; text: shaderOption.text; color: "#ffffff" }
+                            Label {
+                                Layout.fillWidth: true
+                                text: shaderOption.text
+                                color: "#ffffff"
+                            }
                             Image {
                                 visible: root.backend.shaderChoice === shaderOption.modelData.id
                                 source: root.iconRoot + "check.svg"
