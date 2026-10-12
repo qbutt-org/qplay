@@ -3,3 +3,4 @@
 *.pdb
 *.log
 **/target/
+**/.qmlls.ini
