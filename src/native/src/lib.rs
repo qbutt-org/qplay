@@ -1,4 +1,6 @@
+mod app_update;
 mod controller;
+mod files;
 mod gpu;
 mod launch;
 mod mpv;

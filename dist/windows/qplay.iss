@@ -93,18 +93,84 @@ Root: HKA; Subkey: "Software\qbutt-org\qplay\Capabilities"; ValueType: string; V
 Root: HKA; Subkey: "Software\RegisteredApplications"; ValueType: string; ValueName: "qplay"; ValueData: "Software\qbutt-org\qplay\Capabilities"; Flags: uninsdeletevalue
 
 [Run]
-Filename: "{app}\qplay.exe"; Description: "{cm:LaunchProgram,qplay}"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\qplay.exe"; Description: "{cm:LaunchProgram,qplay}"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent; Check: not IsUpdate
+Filename: "{app}\qplay.exe"; WorkingDir: "{app}"; Flags: nowait runascurrentuser; Check: IsUpdate
 
 [CustomMessages]
 english.PortableDirectory=This folder contains a portable qplay profile. Choose a different installation folder.
 russian.PortableDirectory=Эта папка содержит переносной профиль qplay. Выберите другую папку для установки.
+english.UpdateBusy=qplay is still closing. Try the update again after it exits.
+russian.UpdateBusy=qplay ещё закрывается. Повторите обновление после выхода из программы.
+english.UpdateInvalid=Could not verify this qplay update. Run the installer again.
+russian.UpdateInvalid=Не удалось проверить обновление qplay. Запустите установщик ещё раз.
+english.NewerInstalled=A newer qplay version is already installed in this folder.
+russian.NewerInstalled=В этой папке уже установлена более новая версия qplay.
 
 [Code]
+function OpenProcess(Access: LongWord; Inherit: LongWord; ProcessID: LongWord): THandle;
+    external 'OpenProcess@kernel32.dll stdcall';
+function QueryFullProcessImageName(Process: THandle; Flags: LongWord; Name: String; var Size: LongWord): Boolean;
+    external 'QueryFullProcessImageNameW@kernel32.dll stdcall';
+function WaitForSingleObject(Handle: THandle; Milliseconds: LongWord): LongWord;
+    external 'WaitForSingleObject@kernel32.dll stdcall';
+function CloseHandle(Handle: THandle): Boolean;
+    external 'CloseHandle@kernel32.dll stdcall';
+
+function IsUpdate: Boolean;
+begin
+    Result := ExpandConstant('{param:QPLAYUPDATE|}') <> '';
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+    Process: THandle;
+    Size: LongWord;
+    ProcessPath: String;
+    RegisteredPath: String;
+    RegisteredVersion: String;
+    InstalledVersion: Int64;
+    CandidateVersion: Int64;
 begin
     Result := '';
     if FileExists(ExpandConstant('{app}\qplay.portable')) then
+    begin
         Result := CustomMessage('PortableDirectory');
+        Exit;
+    end;
+    if RegQueryStringValue(HKCU64, 'Software\qbutt-org\qplay', 'InstallDir', RegisteredPath)
+        and (CompareText(RegisteredPath, ExpandConstant('{app}')) = 0)
+        and RegQueryStringValue(HKCU64, 'Software\qbutt-org\qplay', 'Version', RegisteredVersion)
+        and StrToVersion(RegisteredVersion, InstalledVersion)
+        and StrToVersion('{#AppVersion}', CandidateVersion)
+        and (ComparePackedVersion(InstalledVersion, CandidateVersion) > 0) then
+    begin
+        Result := CustomMessage('NewerInstalled');
+        Exit;
+    end;
+    if not IsUpdate then
+        Exit;
+    Result := CustomMessage('UpdateInvalid');
+    Process := OpenProcess($100000 or $1000, 0, StrToIntDef(ExpandConstant('{param:QPLAYUPDATE|}'), 0));
+    if Process = 0 then
+    begin
+        Result := '';
+        Exit;
+    end;
+    try
+        Size := 32768;
+        SetLength(ProcessPath, Size);
+        if not QueryFullProcessImageName(Process, 0, ProcessPath, Size) then
+            Exit;
+        SetLength(ProcessPath, Size);
+        if CompareText(ProcessPath, ExpandConstant('{app}\qplay.exe')) <> 0 then
+            Exit;
+        if WaitForSingleObject(Process, 120000) = 0 then
+            Result := ''
+        else
+            Result := CustomMessage('UpdateBusy');
+    finally
+        CloseHandle(Process);
+    end;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);

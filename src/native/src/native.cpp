@@ -19,6 +19,14 @@ void Qplay::retireSession(::rust::Box<RetiredSession> session)
     QThreadPool::globalInstance()->start([session = std::move(session)] {});
 }
 
+void Qplay::startUpdateTask(::rust::Box<UpdateTask> task)
+{
+    QThreadPool::globalInstance()->start([task = std::move(task)]() mutable
+    {
+        run_update_task(std::move(task));
+    });
+}
+
 std::unique_ptr<Qplay::TrackModel> Qplay::createTrackModel()
 {
     return std::make_unique<TrackModel>();

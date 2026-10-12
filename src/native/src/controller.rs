@@ -8,6 +8,7 @@ use cxx::UniquePtr;
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QString, QStringList};
 
+use crate::app_update;
 use crate::launch::LaunchOptions;
 use crate::preferences::Preferences;
 use crate::session::{RenderLease, RetiredSession, Session};
@@ -18,8 +19,10 @@ mod actions;
 mod events;
 mod gpu;
 mod startup;
+mod update;
 
 pub use startup::{FrameWakeup, StartTask, Wakeup, frame_wakeup, run_start_task, wakeup};
+pub use update::{UpdateTask, run_update_task};
 
 #[cxx_qt::bridge(namespace = "Qplay")]
 pub mod ffi {
@@ -62,6 +65,8 @@ pub mod ffi {
         fn startSession(task: Box<StartTask>);
         #[rust_name = "retire_session"]
         fn retireSession(session: Box<RetiredSession>);
+        #[rust_name = "start_update_task"]
+        fn startUpdateTask(task: Box<UpdateTask>);
     }
 
     extern "Rust" {
@@ -70,6 +75,8 @@ pub mod ffi {
         type StartTask;
         type RetiredSession;
         fn run_start_task(task: Box<StartTask>);
+        type UpdateTask;
+        fn run_update_task(task: Box<UpdateTask>);
         type RenderLease;
         fn acquire_render_lease(player: &PlayerController) -> Result<Box<RenderLease>>;
         fn render_generation(self: &RenderLease) -> u64;
@@ -110,6 +117,12 @@ pub mod ffi {
         #[qproperty(QString, effective_shader, cxx_name = "effectiveShader", READ = effective_shader, NOTIFY = state_changed)]
         #[qproperty(QString, framegen_status, cxx_name = "framegenStatus", READ = framegen_status, NOTIFY = state_changed)]
         #[qproperty(QString, gpu_error, cxx_name = "gpuError", READ = gpu_error, NOTIFY = state_changed)]
+        #[qproperty(QString, update_state, cxx_name = "updateState", READ = update_state, NOTIFY = state_changed)]
+        #[qproperty(QString, update_version, cxx_name = "updateVersion", READ = update_version, NOTIFY = state_changed)]
+        #[qproperty(QString, update_url, cxx_name = "updateUrl", READ = update_url, NOTIFY = state_changed)]
+        #[qproperty(QString, update_error, cxx_name = "updateError", READ = update_error, NOTIFY = state_changed)]
+        #[qproperty(i32, update_progress, cxx_name = "updateProgress", READ = update_progress, NOTIFY = state_changed)]
+        #[qproperty(bool, portable, READ = portable, NOTIFY = state_changed)]
         #[qproperty(*mut TrackModel, audio_tracks, cxx_name = "audioTracks", READ = audio_tracks_model, CONSTANT)]
         #[qproperty(*mut TrackModel, subtitle_tracks, cxx_name = "subtitleTracks", READ = subtitle_tracks_model, CONSTANT)]
         type PlayerController = super::PlayerControllerRust;
@@ -160,6 +173,17 @@ pub mod ffi {
         fn framegen_status(&self) -> QString;
         #[cxx_name = "gpuError"]
         fn gpu_error(&self) -> QString;
+        #[cxx_name = "updateState"]
+        fn update_state(&self) -> QString;
+        #[cxx_name = "updateVersion"]
+        fn update_version(&self) -> QString;
+        #[cxx_name = "updateUrl"]
+        fn update_url(&self) -> QString;
+        #[cxx_name = "updateError"]
+        fn update_error(&self) -> QString;
+        #[cxx_name = "updateProgress"]
+        fn update_progress(&self) -> i32;
+        fn portable(&self) -> bool;
         #[cxx_name = "audioTracks"]
         fn audio_tracks_model(&self) -> *mut TrackModel;
         #[cxx_name = "subtitleTracks"]
@@ -168,6 +192,13 @@ pub mod ffi {
         fn configure(self: Pin<&mut Self>, path: &QString, system_language: &QString);
         #[cxx_name = "configureLaunch"]
         fn configure_launch(self: Pin<&mut Self>, arguments: &QStringList) -> QString;
+        #[cxx_name = "configureUpdates"]
+        fn configure_updates(
+            self: Pin<&mut Self>,
+            data: &QString,
+            install: &QString,
+            portable: bool,
+        );
         fn initialize(self: Pin<&mut Self>, library: &QString, profile: &QString);
         #[cxx_name = "setDisplayRate"]
         fn set_display_rate(self: Pin<&mut Self>, fps: f64);
@@ -182,6 +213,15 @@ pub mod ffi {
         #[qinvokable]
         #[rust_name = "change_audio_delay"]
         fn changeAudioDelay(self: Pin<&mut Self>, delay: f64);
+        #[qinvokable]
+        #[rust_name = "check_updates"]
+        fn checkUpdates(self: Pin<&mut Self>);
+        #[qinvokable]
+        #[rust_name = "download_update"]
+        fn downloadUpdate(self: Pin<&mut Self>);
+        #[qinvokable]
+        #[rust_name = "install_update"]
+        fn installUpdate(self: Pin<&mut Self>) -> bool;
         #[qinvokable]
         #[rust_name = "change_shader"]
         fn changeShader(self: Pin<&mut Self>, choice: &QString);
@@ -283,6 +323,16 @@ pub struct PlayerControllerRust {
     error_text: QString,
     audio_output: QString,
     hardware_decoder: QString,
+    update_state: QString,
+    update_version: QString,
+    update_error: QString,
+    update_progress: i32,
+    update_release: Option<app_update::Release>,
+    update_installer: Option<PathBuf>,
+    update_data: Option<PathBuf>,
+    install_directory: Option<PathBuf>,
+    portable: bool,
+    update_cancel: Option<Arc<AtomicBool>>,
 }
 
 impl Default for PlayerControllerRust {
@@ -323,6 +373,16 @@ impl Default for PlayerControllerRust {
             error_text: QString::default(),
             audio_output: QString::default(),
             hardware_decoder: QString::default(),
+            update_state: QString::from("idle"),
+            update_version: QString::default(),
+            update_error: QString::default(),
+            update_progress: 0,
+            update_release: None,
+            update_installer: None,
+            update_data: None,
+            install_directory: None,
+            portable: false,
+            update_cancel: None,
         }
     }
 }
@@ -333,6 +393,9 @@ impl Drop for PlayerControllerRust {
             cancel.store(true, Ordering::Release);
         }
         self.gpu.cancel();
+        if let Some(cancel) = &self.update_cancel {
+            cancel.store(true, Ordering::Release);
+        }
     }
 }
 

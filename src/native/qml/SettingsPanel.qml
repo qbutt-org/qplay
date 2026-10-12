@@ -1,7 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import Qplay.Player
 
@@ -253,6 +253,107 @@ Popup {
                     onClicked: root.backend.changeLanguage(modelData.value)
                 }
             }
+        }
+
+        Label {
+            Layout.topMargin: 19
+            text: root.russian ? qsTr("Обновления") : qsTr("Updates")
+            color: root.mutedColor
+            font.pixelSize: 14
+            font.weight: Font.DemiBold
+        }
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.topMargin: 8
+            spacing: 8
+
+            Button {
+                id: checkUpdate
+                objectName: "checkUpdate"
+                Layout.fillWidth: true
+                implicitHeight: 44
+                text: root.russian ? qsTr("Проверить") : qsTr("Check")
+                enabled: root.backend.updateState !== "checking" && root.backend.updateState !== "downloading"
+                palette.buttonText: root.textColor
+                background: Rectangle {
+                    radius: 7
+                    color: checkUpdate.hovered ? (root.dark ? "#425365" : "#dfe7f0") : root.optionColor
+                    border.color: checkUpdate.visualFocus ? "#009df7" : "transparent"
+                    border.width: 2
+                }
+                onClicked: root.backend.checkUpdates()
+            }
+            Button {
+                id: applyUpdate
+                objectName: "applyUpdate"
+                Layout.fillWidth: true
+                implicitHeight: 44
+                visible: root.backend.updateVersion.length > 0
+                enabled: root.backend.updateState !== "downloading"
+                text: root.backend.portable
+                    ? (root.russian ? qsTr("Скачать ZIP") : qsTr("Download ZIP"))
+                    : root.backend.updateState === "ready" || root.backend.updateState === "installFailed"
+                        ? (root.russian ? qsTr("Установить") : qsTr("Install"))
+                        : (root.russian ? qsTr("Обновить") : qsTr("Update"))
+                palette.buttonText: "#ffffff"
+                background: Rectangle {
+                    radius: 7
+                    color: applyUpdate.hovered ? "#0089db" : "#009df7"
+                    border.color: applyUpdate.visualFocus ? "#ffffff" : "transparent"
+                    border.width: 2
+                }
+                onClicked: {
+                    if (root.backend.portable) {
+                        Qt.openUrlExternally(root.backend.updateUrl)
+                    } else if (root.backend.updateState === "ready" || root.backend.updateState === "installFailed") {
+                        if (root.backend.installUpdate())
+                            Qt.quit()
+                    } else {
+                        root.backend.downloadUpdate()
+                    }
+                }
+            }
+        }
+        Label {
+            id: updateStatus
+            objectName: "updateStatus"
+            Layout.fillWidth: true
+            Layout.topMargin: 7
+            visible: root.backend.updateState !== "idle"
+            color: root.backend.updateError.length > 0 ? "#ed777e" : root.mutedColor
+            font.pixelSize: 13
+            wrapMode: Text.Wrap
+            Accessible.description: root.backend.updateError
+            text: {
+                switch (root.backend.updateState) {
+                case "checking":
+                    return root.russian ? qsTr("Проверка обновлений…") : qsTr("Checking for updates…")
+                case "unpublished":
+                    return root.russian ? qsTr("Пока нет опубликованной версии") : qsTr("No release is available yet")
+                case "current":
+                    return root.russian ? qsTr("Установлена актуальная версия") : qsTr("qplay is up to date")
+                case "available":
+                case "downloadFailed":
+                    if (root.backend.updateState === "downloadFailed")
+                        return root.russian ? qsTr("Не удалось загрузить обновление") : qsTr("Couldn't download the update")
+                    return root.russian ? qsTr("Доступна версия %1").arg(root.backend.updateVersion)
+                                        : qsTr("Version %1 is available").arg(root.backend.updateVersion)
+                case "downloading":
+                    return root.russian ? qsTr("Загрузка: %1%").arg(root.backend.updateProgress)
+                                        : qsTr("Downloading: %1%").arg(root.backend.updateProgress)
+                case "ready":
+                    return root.russian ? qsTr("Обновление готово к установке") : qsTr("Update ready to install")
+                case "checkFailed":
+                    return root.russian ? qsTr("Не удалось проверить обновления") : qsTr("Couldn't check for updates")
+                case "installFailed":
+                    return root.russian ? qsTr("Не удалось запустить установщик") : qsTr("Couldn't start the installer")
+                default:
+                    return ""
+                }
+            }
+            ToolTip.visible: updateHover.hovered && root.backend.updateError.length > 0
+            ToolTip.text: root.backend.updateError
+            HoverHandler { id: updateHover }
         }
 
         Label {

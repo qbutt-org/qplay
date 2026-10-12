@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
-use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
@@ -10,6 +9,8 @@ use reqwest::blocking::Client;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use zip::ZipArchive;
+
+use crate::files::move_new_file;
 
 const RELEASE_URL: &str =
     "https://api.github.com/repos/yt-dlp/yt-dlp-nightly-builds/releases/latest";
@@ -581,21 +582,6 @@ fn remove_stale_partial(path: &Path) -> Result<(), String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(format!("Remove incomplete online tool: {error}")),
     }
-}
-
-fn move_new_file(source: &Path, target: &Path) -> std::io::Result<()> {
-    #[link(name = "Kernel32")]
-    unsafe extern "system" {
-        fn MoveFileW(source: *const u16, target: *const u16) -> i32;
-    }
-
-    let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
-    let target: Vec<u16> = target.as_os_str().encode_wide().chain(Some(0)).collect();
-    // SAFETY: Both UTF-16 paths are terminated and live through the Win32 call.
-    if unsafe { MoveFileW(source.as_ptr(), target.as_ptr()) } == 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    Ok(())
 }
 
 fn verified_file(path: &Path, digest: &str, size: Option<u64>) -> Result<bool, String> {

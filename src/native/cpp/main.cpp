@@ -122,6 +122,7 @@ int main(int argc, char *argv[])
             return 2;
         }
         backend.configure(configuration + QStringLiteral("/preferences.json"), QLocale::system().name());
+        backend.configureUpdates(profile, installDirectory, portable);
         QObject::connect(&backend, &Qplay::PlayerController::shutdownRequested,
             &app, [&app] { app.quit(); });
         QQmlApplicationEngine engine;

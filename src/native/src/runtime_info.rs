@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 
 use crate::yt_dlp::YtDlp;
 
-const VERSION: &str = include_str!(concat!(
+pub(crate) const VERSION: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../qplay-version.txt"
 ));
