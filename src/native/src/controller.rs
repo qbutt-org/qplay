@@ -11,6 +11,7 @@ use cxx_qt_lib::QString;
 use crate::preferences::Preferences;
 use crate::session::{RenderLease, RetiredSession, Session};
 use crate::track_model;
+use crate::yt_dlp;
 
 mod actions;
 mod events;
