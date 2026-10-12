@@ -45,12 +45,14 @@ child.stdout.on("data", (chunk) => {
 });
 child.stderr.on("data", (chunk) => {
     log += chunk.toString();
+    if (process.env.QPLAY_NATIVE_FRAMEGEN_ACCEPTANCE)
+        process.stderr.write(chunk);
 });
 
 const timeout = setTimeout(() => {
     timedOut = true;
     child.kill();
-}, 60_000);
+}, process.env.QPLAY_NATIVE_FRAMEGEN_ACCEPTANCE ? 35 * 60_000 : 60_000);
 
 const exitCode = await new Promise<number | null>((accept, reject) => {
     child.once("error", reject);

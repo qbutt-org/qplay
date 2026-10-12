@@ -232,7 +232,7 @@ impl ffi::PlayerController {
         state.gpu.video_signature = None;
         let library_path = PathBuf::from(library.to_string());
         state.gpu.engine_root = library_path.parent().map(PathBuf::from);
-        state.gpu.player_data = Some(PathBuf::from(profile.to_string()));
+        state.gpu.runtime_root = std::env::var_os("QPLAY_MEDIA_RUNTIME").map(PathBuf::from);
         state.state = ffi::State::Starting;
         state.error_text = QString::default();
 

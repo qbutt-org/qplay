@@ -3,6 +3,7 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use serde::Deserialize;
+use serde_json::Value;
 
 use super::framegen::Rate;
 use super::process::run_bounded;
@@ -30,13 +31,13 @@ struct TimingStream {
 
 #[derive(Deserialize)]
 struct TimingFrame {
-    best_effort_timestamp: Option<String>,
+    best_effort_timestamp: Option<Value>,
 }
 
 #[derive(Deserialize)]
 struct TimingPacket {
-    pts: Option<String>,
-    dts: Option<String>,
+    pts: Option<Value>,
+    dts: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -139,6 +140,14 @@ fn parse_rate(value: &str) -> Option<Rate> {
     Rate::new(num.parse().ok()?, den.parse().ok()?)
 }
 
+fn timestamp(value: &Value) -> Option<i64> {
+    match value {
+        Value::Number(number) => number.as_i64(),
+        Value::String(text) => text.parse().ok(),
+        _ => None,
+    }
+}
+
 fn gcd(mut left: i64, mut right: i64) -> i64 {
     while right != 0 {
         (left, right) = (right, left % right);
@@ -184,18 +193,14 @@ fn analyze(document: TimingDocument) -> Result<Timing, String> {
     let r_rate = parse_rate(&stream.r_frame_rate);
     let avg_rate = parse_rate(&stream.avg_frame_rate);
 
+    let local_frames = document.packets.is_empty();
     let timestamps: Vec<Option<i64>>;
     let sample_size;
-    if document.packets.is_empty() {
+    if local_frames {
         timestamps = document
             .frames
             .iter()
-            .map(|frame| {
-                frame
-                    .best_effort_timestamp
-                    .as_deref()
-                    .and_then(|value| value.parse().ok())
-            })
+            .map(|frame| frame.best_effort_timestamp.as_ref().and_then(timestamp))
             .collect();
         sample_size = FRAMES_PER_SAMPLE;
     } else {
@@ -204,15 +209,11 @@ fn analyze(document: TimingDocument) -> Result<Timing, String> {
         for packet in &document.packets {
             let pts = packet
                 .pts
-                .as_deref()
-                .and_then(|value| value.parse::<i64>().ok())
+                .as_ref()
+                .and_then(timestamp)
                 .ok_or("The network timing probe omitted packet PTS.")?;
             packet_times.push(pts);
-            if let Some(dts) = packet
-                .dts
-                .as_deref()
-                .and_then(|value| value.parse::<i64>().ok())
-            {
+            if let Some(dts) = packet.dts.as_ref().and_then(timestamp) {
                 last_dts = Some(last_dts.map_or(dts, |last: i64| last.max(dts)));
             }
         }
@@ -227,7 +228,13 @@ fn analyze(document: TimingDocument) -> Result<Timing, String> {
     let mut deltas = Vec::new();
     for burst in timestamps.chunks(sample_size) {
         let mut previous = None;
-        for &timestamp in burst {
+        // Packet-count intervals can end before FFprobe flushes reordered B frames.
+        let reliable_end = if local_frames {
+            burst.len().saturating_sub(4)
+        } else {
+            burst.len()
+        };
+        for &timestamp in &burst[..reliable_end] {
             let timestamp = timestamp.ok_or("The timing probe omitted a frame timestamp.")?;
             if let Some(before) = previous {
                 let delta = timestamp

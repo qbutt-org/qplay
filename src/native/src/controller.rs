@@ -155,6 +155,8 @@ pub mod ffi {
 
         fn configure(self: Pin<&mut Self>, path: &QString, system_language: &QString);
         fn initialize(self: Pin<&mut Self>, library: &QString, profile: &QString);
+        #[cxx_name = "setDisplayRate"]
+        fn set_display_rate(self: Pin<&mut Self>, fps: f64);
         #[qinvokable]
         #[rust_name = "change_language"]
         fn changeLanguage(self: Pin<&mut Self>, language: &QString);

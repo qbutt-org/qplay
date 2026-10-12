@@ -13,6 +13,7 @@
 #include <QQmlError>
 #include <QQuickStyle>
 #include <QQuickWindow>
+#include <QScreen>
 #include <QStandardPaths>
 #include <QStringList>
 #include <QTextStream>
@@ -128,6 +129,21 @@ int main(int argc, char *argv[])
                     output << warning << '\n';
             }
             return 1;
+        }
+        QMetaObject::Connection refreshConnection;
+        auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+        if (window)
+        {
+            const auto syncScreen = [&backend, &refreshConnection](QScreen *screen)
+            {
+                QObject::disconnect(refreshConnection);
+                backend.setDisplayRate(screen ? screen->refreshRate() : 0);
+                if (screen)
+                    refreshConnection = QObject::connect(screen, &QScreen::refreshRateChanged,
+                        &backend, [&backend](qreal rate) { backend.setDisplayRate(rate); });
+            };
+            QObject::connect(window, &QQuickWindow::screenChanged, &backend, syncScreen);
+            syncScreen(window->screen());
         }
         if (!media.isEmpty())
             backend.openMedia(media);

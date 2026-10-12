@@ -43,7 +43,8 @@ pub struct GpuState {
     pub cancel: Option<Arc<AtomicBool>>,
     pub generation: u64,
     pub engine_root: Option<PathBuf>,
-    pub player_data: Option<PathBuf>,
+    pub runtime_root: Option<PathBuf>,
+    pub display_rate: Option<Rate>,
 }
 
 impl Default for GpuState {
@@ -71,7 +72,8 @@ impl Default for GpuState {
             cancel: None,
             generation: 0,
             engine_root: None,
-            player_data: None,
+            runtime_root: None,
+            display_rate: None,
         }
     }
 }
@@ -160,7 +162,7 @@ struct ProbeInput {
     shader_choice: ShaderChoice,
     content_choice: ContentChoice,
     engine_root: PathBuf,
-    player_data: PathBuf,
+    runtime_root: PathBuf,
 }
 
 struct ProbeResult {
@@ -185,8 +187,8 @@ fn probe(input: ProbeInput, cancel: &AtomicBool, on_prepare: impl FnOnce()) -> P
                 .map(|classification| classification.kind)
         })
         .unwrap_or(ContentKind::Unknown);
-    let timing = if let Some(path) = input.local.as_ref() {
-        timing::probe_local_timing(&input.ffprobe, path, input.duration, input.stream, cancel).ok()
+    let timing_result = if let Some(path) = input.local.as_ref() {
+        timing::probe_local_timing(&input.ffprobe, path, input.duration, input.stream, cancel)
     } else if let Some(filename) = input.stream_filename.as_deref() {
         timing::resolve_network_source(
             filename,
@@ -194,7 +196,6 @@ fn probe(input: ProbeInput, cancel: &AtomicBool, on_prepare: impl FnOnce()) -> P
             input.stream,
             input.ytdl_result.as_deref(),
         )
-        .ok()
         .and_then(|resolved| {
             timing::probe_network_timing(
                 &input.ffprobe,
@@ -210,11 +211,11 @@ fn probe(input: ProbeInput, cancel: &AtomicBool, on_prepare: impl FnOnce()) -> P
                 },
                 cancel,
             )
-            .ok()
         })
     } else {
-        None
+        Err("The selected video source is unavailable for FPS analysis.".into())
     };
+    let timing = timing_result.as_ref().ok().copied();
     let hardware = hardware::detect().ok();
     let wants_framegen = !matches!(input.shader_choice,
         ShaderChoice::Manual(preset) if preset != ShaderPreset::Fsr)
@@ -223,21 +224,33 @@ fn probe(input: ProbeInput, cancel: &AtomicBool, on_prepare: impl FnOnce()) -> P
             FramegenChoice::On => true,
             FramegenChoice::Auto => input.content_choice.effective(detected) == ContentKind::Movie,
         };
-    let (runtime, mut error) = if wants_framegen
-        && timing.as_ref().is_some_and(|value| !value.variable)
-        && input.display_rate.is_some_and(|display| {
-            timing.is_some_and(|timing| display.fps() > timing.source_rate.fps())
-        })
-        && !input.interlaced
-    {
+    let guard = if input.interlaced {
+        Some("Frame generation is unavailable for interlaced video.".to_owned())
+    } else {
+        match (timing_result.as_ref(), input.display_rate) {
+            (Err(error), _) => Some(error.clone()),
+            (Ok(timing), _) if timing.variable => {
+                Some("Frame generation needs constant video frame timing.".to_owned())
+            }
+            (Ok(_), None) => Some("The display refresh rate is unavailable.".to_owned()),
+            (Ok(timing), Some(display)) if display.fps() <= timing.source_rate.fps() => {
+                Some("The display has no frame-rate headroom for this video.".to_owned())
+            }
+            _ => None,
+        }
+    };
+    let (runtime, mut error) = if wants_framegen && guard.is_none() {
         on_prepare();
-        let manager = Manager::new(&input.engine_root, &input.player_data);
+        let manager = Manager::new(&input.engine_root, &input.runtime_root);
         match manager.prepare(cancel) {
             Ok(runtime) => (Some(runtime), None),
             Err(error) => (None, Some(error)),
         }
     } else {
-        (None, None)
+        let error = (input.framegen_choice == FramegenChoice::On)
+            .then_some(guard)
+            .flatten();
+        (None, error)
     };
     let mut filter = None;
     let mut selection = None;
@@ -262,7 +275,7 @@ fn probe(input: ProbeInput, cancel: &AtomicBool, on_prepare: impl FnOnce()) -> P
             Ok(Some(chosen)) => {
                 let script = input.engine_root.join("profile/framegen/framegen.vpy");
                 let preparer = input.engine_root.join("profile/framegen/prepare.py");
-                let manager = Manager::new(&input.engine_root, &input.player_data);
+                let manager = Manager::new(&input.engine_root, &input.runtime_root);
                 match framegen::graph(
                     runtime,
                     &script,
@@ -309,6 +322,17 @@ fn probe(input: ProbeInput, cancel: &AtomicBool, on_prepare: impl FnOnce()) -> P
 }
 
 impl ffi::PlayerController {
+    pub(super) fn set_display_rate(mut self: Pin<&mut Self>, fps: f64) {
+        let rate = Rate::from_fps(fps);
+        if self.gpu.display_rate == rate {
+            return;
+        }
+        self.as_mut().rust_mut().gpu.display_rate = rate;
+        if self.file_loaded {
+            self.as_mut().begin_gpu_probe();
+        }
+    }
+
     pub(super) fn cancel_gpu(mut self: Pin<&mut Self>) {
         let generation = self.gpu.generation;
         if self.gpu.active_filter.is_some() || self.gpu.filter.is_some() {
@@ -332,7 +356,7 @@ impl ffi::PlayerController {
         let Some(engine_root) = self.gpu.engine_root.clone() else {
             return;
         };
-        let Some(player_data) = self.gpu.player_data.clone() else {
+        let Some(runtime_root) = self.gpu.runtime_root.clone() else {
             return;
         };
         let Some(media) = self.media.clone() else {
@@ -375,7 +399,7 @@ impl ffi::PlayerController {
             cookies_in_use: session
                 .text("cookies-file")
                 .is_some_and(|value| !value.is_empty()),
-            display_rate: session.number("display-fps").and_then(Rate::from_fps),
+            display_rate: self.gpu.display_rate,
             width: session.number("video-params/w").unwrap_or(0.0) as u32,
             height: session.number("video-params/h").unwrap_or(0.0) as u32,
             interlaced: self.gpu.interlaced_seen,
@@ -385,7 +409,7 @@ impl ffi::PlayerController {
             shader_choice: self.gpu.shader_choice,
             content_choice: self.gpu.content_choice,
             engine_root,
-            player_data,
+            runtime_root,
         };
         let cancel = Arc::new(AtomicBool::new(false));
         let generation = self.gpu.generation;
@@ -566,15 +590,14 @@ impl ffi::PlayerController {
             }
             GpuCommand::AddFilter { filter, generation } if generation == self.gpu.generation => {
                 self.as_mut().rust_mut().gpu.active_filter = Some(filter);
-                self.as_mut().rust_mut().gpu.framegen_status = "active".into();
+                self.as_mut().rust_mut().gpu.framegen_status = "starting".into();
                 self.as_mut().rust_mut().gpu.error.clear();
-                if let (Some(timing), Some(selection), Some(runtime), Some(session)) = (
+                if let (Some(timing), Some(selection), Some(runtime)) = (
                     self.gpu.timing,
                     self.gpu.selection,
                     self.gpu.runtime.as_ref(),
-                    self.session.as_ref(),
                 ) {
-                    let display = session.number("display-fps").and_then(Rate::from_fps);
+                    let display = self.gpu.display_rate;
                     if let Some(display) = display {
                         let ladder =
                             framegen::target_ladder(timing.source_rate, display, runtime.backend());
@@ -652,6 +675,16 @@ impl ffi::PlayerController {
                 && session.number("video-out-params/h") == Some(selection.output_height as f64),
             sample,
         };
+        if self.gpu.framegen_status == "starting"
+            && state.filter_active
+            && state.output_ready
+            && state.sample.playback_position > 0.0
+            && (state.sample.filter_fps - selection.target.rate.fps()).abs()
+                <= selection.target.rate.fps() * 0.03
+        {
+            self.as_mut().rust_mut().gpu.framegen_status = "active".into();
+            self.as_mut().state_changed();
+        }
         let action = self
             .as_mut()
             .rust_mut()

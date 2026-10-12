@@ -125,6 +125,8 @@ int main(int argc, char *argv[])
     const QString secondMedia = arguments.at(3);
     const QString profile = arguments.at(4);
     const QString evidencePrefix = arguments.at(5);
+    if (qEnvironmentVariableIsEmpty("QPLAY_MEDIA_RUNTIME"))
+        qputenv("QPLAY_MEDIA_RUNTIME", QDir(profile).absoluteFilePath(QStringLiteral("framegen")).toUtf8());
     QJsonObject evidence;
     int exitCode = 0;
 
@@ -139,6 +141,7 @@ int main(int argc, char *argv[])
 
         {
             Qplay::PlayerController backend;
+            backend.setDisplayRate(60);
             const QString preferences = QDir(profile).absoluteFilePath(QStringLiteral("config/preferences.json"));
             backend.configure(preferences, QStringLiteral("en_US"));
             backend.changeLanguage(QStringLiteral("ru"));
@@ -479,6 +482,62 @@ int main(int argc, char *argv[])
 
             backend.stop();
             wait([&] { return !backend.mediaLoaded() && backend.position() == 0 && backend.duration() == 0; }, "Stopping actual mpv playback failed");
+            if (qEnvironmentVariableIsSet("QPLAY_NATIVE_FRAMEGEN_ACCEPTANCE"))
+            {
+                const auto waitGpu = [&](const auto &condition, qint64 timeout, const char *message)
+                {
+                    QElapsedTimer timer;
+                    timer.start();
+                    QString previousStatus;
+                    while (!condition() && timer.elapsed() < timeout)
+                    {
+                        tick();
+                        const auto status = backend.framegenStatus();
+                        if (status != previousStatus)
+                        {
+                            std::fprintf(stderr, "Frame generation: %s\n", status.toUtf8().constData());
+                            std::fflush(stderr);
+                            previousStatus = status;
+                        }
+                        if (!backend.gpuError().isEmpty())
+                            throw std::runtime_error(backend.gpuError().toStdString());
+                    }
+                    require(condition(), message);
+                };
+
+                backend.changeSpeed(1);
+                wait([&] { return std::abs(backend.speed() - 1) < 0.001; },
+                    "Normal playback speed did not return");
+                backend.changeShader(QStringLiteral("auto"));
+                backend.changeContent(QStringLiteral("movie"));
+                backend.changeFramegen(QStringLiteral("on"));
+                backend.openMedia(media);
+                wait([&] { return backend.mediaLoaded(); }, "Frame generation video did not load");
+                if (!backend.paused())
+                    backend.togglePause();
+                wait([&] { return backend.paused(); }, "Pause before graph preparation failed");
+                waitGpu([&] { return backend.framegenStatus() == QStringLiteral("prepared")
+                    || backend.framegenStatus() == QStringLiteral("active"); }, 30 * 60 * 1000,
+                    "Frame generation graph preparation timed out");
+                if (backend.framegenStatus() == QStringLiteral("prepared"))
+                {
+                    backend.openMedia(media);
+                    wait([&] { return backend.mediaLoaded(); }, "Prepared video did not reopen");
+                }
+                if (backend.paused())
+                    backend.togglePause();
+                waitGpu([&] { return backend.framegenStatus() == QStringLiteral("active"); },
+                    2 * 60 * 1000, "Frame generation output was not verified");
+                require(backend.gpuError().isEmpty(), "Frame generation returned an error");
+                tick();
+                require(target.toImage().save(evidencePrefix + QStringLiteral(".framegen.png")),
+                    "Save generated-frame playback composition failed");
+                evidence[QStringLiteral("framegenActive")] = true;
+                evidence[QStringLiteral("framegenChoice")] = backend.framegenChoice();
+                evidence[QStringLiteral("framegenStatus")] = backend.framegenStatus();
+                backend.stop();
+                wait([&] { return !backend.mediaLoaded(); }, "Stopping generated-frame playback failed");
+            }
             root.reset();
             gl.makeCurrent(&surface);
             control.invalidate();

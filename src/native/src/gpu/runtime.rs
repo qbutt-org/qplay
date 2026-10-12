@@ -162,10 +162,10 @@ pub struct Manager {
 }
 
 impl Manager {
-    pub fn new(engine_root: &Path, player_data: &Path) -> Self {
+    pub fn new(engine_root: &Path, runtime_root: &Path) -> Self {
         Self {
             executable: engine_root.join("profile/tools/bin/framegen-manager.exe"),
-            runtime_root: player_data.join("framegen"),
+            runtime_root: runtime_root.to_path_buf(),
         }
     }
 
