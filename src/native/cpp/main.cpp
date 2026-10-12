@@ -3,15 +3,19 @@
 
 #include <QByteArray>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QIcon>
 #include <QLocale>
+#include <QObject>
 #include <QQmlApplicationEngine>
+#include <QQmlError>
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QStandardPaths>
 #include <QStringList>
+#include <QTextStream>
 #include <QThreadPool>
 
 #include "qplay_native/src/controller.cxxqt.h"
@@ -105,10 +109,26 @@ int main(int argc, char *argv[])
         Qplay::PlayerController backend;
         backend.configure(configuration + QStringLiteral("/preferences.json"), QLocale::system().name());
         QQmlApplicationEngine engine;
+        QStringList startupWarnings;
+        QObject::connect(&engine, &QQmlEngine::warnings, &engine,
+            [&](const QList<QQmlError> &warnings) {
+                for (const QQmlError &warning : warnings)
+                    startupWarnings.append(warning.toString());
+            });
         engine.setInitialProperties({{QStringLiteral("backend"), QVariant::fromValue(&backend)}});
         engine.loadFromModule(QStringLiteral("Qplay.Views"), QStringLiteral("Main"));
         if (engine.rootObjects().isEmpty())
+        {
+            QDir().mkpath(profile);
+            QFile diagnostics(QDir(profile).filePath(QStringLiteral("startup-error.log")));
+            if (diagnostics.open(QIODevice::WriteOnly | QIODevice::Text))
+            {
+                QTextStream output(&diagnostics);
+                for (const QString &warning : startupWarnings)
+                    output << warning << '\n';
+            }
             return 1;
+        }
         if (!media.isEmpty())
             backend.openMedia(media);
         backend.initialize(library, profile);
