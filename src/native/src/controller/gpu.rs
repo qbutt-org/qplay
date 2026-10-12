@@ -335,7 +335,7 @@ impl ffi::PlayerController {
         let Some(player_data) = self.gpu.player_data.clone() else {
             return;
         };
-        let Some(media) = self.media.as_ref() else {
+        let Some(media) = self.media.clone() else {
             return;
         };
         let tracks: Vec<VideoTrack> = session
@@ -452,7 +452,10 @@ impl ffi::PlayerController {
             if self.gpu.active_filter.as_ref() != Some(&filter) {
                 self.as_mut().dispatch_gpu(
                     &["vf", "add", &filter],
-                    GpuCommand::AddFilter { filter, generation },
+                    GpuCommand::AddFilter {
+                        filter: filter.clone(),
+                        generation,
+                    },
                 );
             }
         }

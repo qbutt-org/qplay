@@ -132,8 +132,6 @@ pub fn resolve_network_source(
 pub struct Timing {
     pub source_rate: Rate,
     pub variable: bool,
-    pub verified_deltas: usize,
-    pub outliers: usize,
 }
 
 fn parse_rate(value: &str) -> Option<Rate> {
@@ -282,8 +280,6 @@ fn analyze(document: TimingDocument) -> Result<Timing, String> {
     Ok(Timing {
         source_rate,
         variable: outliers > 0,
-        verified_deltas: deltas.len(),
-        outliers,
     })
 }
 

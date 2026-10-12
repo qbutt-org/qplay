@@ -47,13 +47,11 @@ pub struct DeviceBinding {
 pub struct Runtime {
     schema_version: u32,
     version: u32,
-    pub runtime_id: String,
     ready: bool,
     backend: String,
     pub version_dir: PathBuf,
     pub vsscript_dir: PathBuf,
     pub python_home: PathBuf,
-    pub dll_dirs: Vec<PathBuf>,
     pub plugin_dir: PathBuf,
     pub model_dir: PathBuf,
     pub engine_dir: PathBuf,

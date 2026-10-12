@@ -155,6 +155,7 @@ int main(int argc, char *argv[])
             }
             backend.changeLanguage(QStringLiteral("en"));
             backend.changeAppearance(QStringLiteral("dark"));
+            backend.changeFramegen(QStringLiteral("off"));
 
             QQuickRenderControl control;
             QQuickWindow window(&control);
@@ -233,6 +234,27 @@ int main(int argc, char *argv[])
             require(backend.duration() > 30, "Incorrect media duration");
             require(!backend.audioOutput().isEmpty(), "No audio output initialized");
             require(backend.audioTracks()->rowCount({}) > 0, "No typed audio track state");
+            backend.changeShader(QStringLiteral("fsr"));
+            wait([&] { return backend.effectiveShader() == QStringLiteral("fsr"); },
+                "FSR shader did not reach libmpv");
+            require(backend.gpuError().isEmpty(), "FSR shader returned an error");
+            tick();
+            require(target.toImage().save(evidencePrefix + QStringLiteral(".fsr.png")),
+                "Save FSR playback composition failed");
+            backend.changeShader(QStringLiteral("anime4k_a"));
+            wait([&] { return backend.effectiveShader() == QStringLiteral("anime4k_a"); },
+                "Anime4K shader did not reach libmpv");
+            require(backend.gpuError().isEmpty(), "Anime4K shader returned an error");
+            tick();
+            require(target.toImage().save(evidencePrefix + QStringLiteral(".anime4k.png")),
+                "Save Anime4K playback composition failed");
+            {
+                Qplay::PlayerController restored;
+                restored.configure(preferences, QStringLiteral("en_US"));
+                require(restored.shaderChoice() == QStringLiteral("anime4k_a")
+                    && restored.framegenChoice() == QStringLiteral("off"),
+                    "GPU choices did not persist");
+            }
 
             backend.changeAudioDelay(0.2);
             wait([&] { return std::abs(backend.appliedAudioDelay() - 0.2) < 0.001; },
@@ -309,6 +331,19 @@ int main(int argc, char *argv[])
             backend.seek(20);
             wait([&] { return std::abs(backend.position() - 20) < 0.05; },
                 "Seek to the visual inspection frame failed");
+            backend.changeShader(QStringLiteral("off"));
+            wait([&] { return backend.effectiveShader() == QStringLiteral("off"); },
+                "Disabling the shader did not reach libmpv");
+            for (int frame = 0; frame < 4; ++frame)
+                tick();
+            const auto plainFrame = target.toImage().copy(QRect(100, 120, 800, 380));
+            backend.changeShader(QStringLiteral("anime4k_a"));
+            wait([&] { return backend.effectiveShader() == QStringLiteral("anime4k_a"); },
+                "Restoring Anime4K did not reach libmpv");
+            for (int frame = 0; frame < 4; ++frame)
+                tick();
+            const auto processedFrame = target.toImage().copy(QRect(100, 120, 800, 380));
+            require(plainFrame != processedFrame, "Anime4K did not change the rendered video frame");
             hover(window, *pauseButton);
             tick();
             require(target.toImage().save(evidencePrefix + QStringLiteral(".png")), "Save actual Qt/mpv composition failed");
@@ -349,6 +384,17 @@ int main(int argc, char *argv[])
             click(window, *speedPreset);
             wait([&] { return std::abs(backend.speed() - 2) < 0.001; },
                 "QML speed preset did not reach libmpv");
+
+            playbackMenu->setProperty("page", 0);
+            tick();
+            auto *fxRow = findVisualItem(popupContent, QStringLiteral("fxMenuRow"));
+            require(fxRow != nullptr, "FX menu row unavailable");
+            click(window, *fxRow);
+            wait([&] { return playbackMenu->property("page").toInt() == 4; },
+                "The FX row did not open its own view");
+            tick();
+            require(target.toImage().save(evidencePrefix + QStringLiteral(".fx.png")),
+                "Save actual FX controls failed");
 
             require(QMetaObject::invokeMethod(playbackMenu, "close"), "Close playback menu failed");
             wait([&] { return !playbackMenu->property("opened").toBool(); },
@@ -396,9 +442,13 @@ int main(int argc, char *argv[])
                 {QStringLiteral("globalAudioDelay"), backend.audioDelay()},
                 {QStringLiteral("libmpvAudioDelay"), backend.appliedAudioDelay()},
                 {QStringLiteral("ownedChildren"), children},
+                {QStringLiteral("effectiveShader"), backend.effectiveShader()},
+                {QStringLiteral("anime4kChangedRenderedFrame"), true},
+                {QStringLiteral("framegenChoice"), backend.framegenChoice()},
                 {QStringLiteral("pauseSeekResume"), true},
                 {QStringLiteral("playbackMenuOpened"), playbackMenuOpened},
                 {QStringLiteral("speedSubmenuOpened"), speedSubmenuOpened},
+                {QStringLiteral("fxSubmenuOpened"), true},
                 {QStringLiteral("speedPresetApplied"), std::abs(backend.speed() - 2) < 0.001},
                 {QStringLiteral("settingsLightRendered"), true},
                 {QStringLiteral("settingsDarkRendered"), true},

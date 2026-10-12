@@ -8,6 +8,8 @@ The prepared mpv profile keeps certificate and host-name verification enabled. `
 
 `framegen-manager.exe` selects the available NVIDIA/TensorRT or Intel/OpenVINO backend and prepares its pinned runtime in qplay's data directory. Its source, Cargo lock, package recipe and runtime catalog are maintained under `profile/tools/framegen-manager`.
 
+The native player keeps content detection, shader and frame-rate policy, quality monitoring and libmpv commands in `src/native/src/gpu/` and its controller. It starts the existing manager only when a compatible video needs an absent or damaged frame-generation runtime. That installer remains a bounded child in a kill-on-close Windows job; media changes cancel it. VapourSynth, vs-mlrt, `prepare.py` and `framegen.vpy` remain the model compilation and filter engine boundary. The native player does not embed the installer's download and archive stack.
+
 `framegen-bootstrap.dll` is the mpv C plugin that validates the selected manager manifest and loads its portable VSScript into the running player. Its source and package recipe are under `profile/tools/framegen-bootstrap`.
 
 `framegen-vsov.dll` is the modified GPL-3.0 OpenVINO plugin. Corresponding source, build instructions, modification notice and dependency licenses are included under `profile/tools/framegen-vsov`.

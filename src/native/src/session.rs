@@ -205,7 +205,7 @@ impl Session {
     pub fn number(&self, name: &str) -> Option<f64> {
         let raw = self.raw();
         let name = CString::new(name).ok()?;
-        let mut value = 0.0;
+        let mut value: f64 = 0.0;
         let result = unsafe {
             (raw.api.get_property)(
                 raw.handle,

@@ -54,8 +54,6 @@ pub struct StyleMetrics {
 pub struct Classification {
     pub kind: ContentKind,
     pub confidence: f64,
-    pub drawn_score: f64,
-    pub cadence_score: f64,
 }
 
 fn unit(value: f64) -> f64 {
@@ -134,7 +132,5 @@ pub fn classify(metrics: StyleMetrics) -> Classification {
     Classification {
         kind,
         confidence: unit(confidence),
-        drawn_score,
-        cadence_score,
     }
 }

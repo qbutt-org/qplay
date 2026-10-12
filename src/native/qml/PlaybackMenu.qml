@@ -93,7 +93,7 @@ Popup {
                 delegate: ItemDelegate {
                     id: mainRow
                     required property var modelData
-                    objectName: modelData.page === 3 ? "speedMenuRow" : ""
+                    objectName: modelData.page === 3 ? "speedMenuRow" : modelData.page === 4 ? "fxMenuRow" : ""
                     Layout.fillWidth: true
                     implicitHeight: 50
                     Accessible.name: modelData.title + ": " + modelData.value
@@ -449,44 +449,6 @@ Popup {
                 spacing: 2
 
                 Label {
-                    Layout.topMargin: 6
-                    Layout.bottomMargin: 4
-                    text: root.russian ? qsTr("Тип видео") : qsTr("Video type")
-                    color: "#b9bec4"
-                    font.pixelSize: 13
-                }
-                Repeater {
-                    model: [
-                        { id: "auto", label: root.russian ? qsTr("Авто") : qsTr("Auto") },
-                        { id: "anime", label: root.russian ? qsTr("Аниме") : qsTr("Anime") },
-                        { id: "movie", label: root.russian ? qsTr("Фильм") : qsTr("Movie") }
-                    ]
-                    delegate: ItemDelegate {
-                        id: contentOption
-                        required property var modelData
-                        Layout.fillWidth: true
-                        implicitHeight: 44
-                        text: modelData.label
-                        Accessible.name: text
-                        onClicked: root.backend.changeContent(modelData.id)
-                        contentItem: RowLayout {
-                            Label {
-                                Layout.fillWidth: true
-                                text: contentOption.text
-                                color: "#ffffff"
-                            }
-                            Image {
-                                visible: root.backend.contentChoice === contentOption.modelData.id
-                                source: root.iconRoot + "check.svg"
-                                sourceSize: Qt.size(20, 20)
-                                Layout.preferredWidth: 20
-                                Layout.preferredHeight: 20
-                            }
-                        }
-                    }
-                }
-
-                Label {
                     Layout.topMargin: 10
                     Layout.bottomMargin: 4
                     text: root.russian ? qsTr("Генерация кадров") : qsTr("Frame generation")
@@ -572,6 +534,44 @@ Popup {
                             }
                             Image {
                                 visible: root.backend.shaderChoice === shaderOption.modelData.id
+                                source: root.iconRoot + "check.svg"
+                                sourceSize: Qt.size(20, 20)
+                                Layout.preferredWidth: 20
+                                Layout.preferredHeight: 20
+                            }
+                        }
+                    }
+                }
+
+                Label {
+                    Layout.topMargin: 6
+                    Layout.bottomMargin: 4
+                    text: root.russian ? qsTr("Тип видео") : qsTr("Video type")
+                    color: "#b9bec4"
+                    font.pixelSize: 13
+                }
+                Repeater {
+                    model: [
+                        { id: "auto", label: root.russian ? qsTr("Авто") : qsTr("Auto") },
+                        { id: "anime", label: root.russian ? qsTr("Аниме") : qsTr("Anime") },
+                        { id: "movie", label: root.russian ? qsTr("Фильм") : qsTr("Movie") }
+                    ]
+                    delegate: ItemDelegate {
+                        id: contentOption
+                        required property var modelData
+                        Layout.fillWidth: true
+                        implicitHeight: 44
+                        text: modelData.label
+                        Accessible.name: text
+                        onClicked: root.backend.changeContent(modelData.id)
+                        contentItem: RowLayout {
+                            Label {
+                                Layout.fillWidth: true
+                                text: contentOption.text
+                                color: "#ffffff"
+                            }
+                            Image {
+                                visible: root.backend.contentChoice === contentOption.modelData.id
                                 source: root.iconRoot + "check.svg"
                                 sourceSize: Qt.size(20, 20)
                                 Layout.preferredWidth: 20

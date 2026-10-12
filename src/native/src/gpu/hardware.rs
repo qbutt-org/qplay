@@ -12,7 +12,6 @@ pub enum HardwareTier {
 
 #[derive(Clone, Debug)]
 pub struct HardwareProfile {
-    pub adapter: String,
     pub tier: HardwareTier,
     pub quality: ShaderQuality,
     pub max_gan_scale: u8,
@@ -117,7 +116,6 @@ fn profile(name: &str, vendor: u32, memory_bytes: u64, software: bool) -> Hardwa
         }
     };
     HardwareProfile {
-        adapter: name.to_owned(),
         tier,
         quality,
         max_gan_scale,
