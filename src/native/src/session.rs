@@ -121,12 +121,22 @@ impl Session {
                 .check(unsafe { (raw.api.option)(handle, name.as_ptr(), value.as_ptr()) })
                 .map_err(|error| format!("Set mpv option {}: {error}", name.to_string_lossy()))?;
         }
-        for (name, value) in launch.mpv_options(ytdl_path) {
-            let name = CString::new(name).map_err(|error| error.to_string())?;
-            let value = CString::new(value).map_err(|error| error.to_string())?;
+        for (name, value) in launch.mpv_options() {
+            let name = CString::new(name.as_str()).map_err(|error| error.to_string())?;
+            let value = CString::new(value.as_str()).map_err(|error| error.to_string())?;
             raw.api
                 .check(unsafe { (raw.api.option)(handle, name.as_ptr(), value.as_ptr()) })
                 .map_err(|error| format!("Set mpv option {}: {error}", name.to_string_lossy()))?;
+        }
+        for (name, entries) in launch.mpv_array_options() {
+            raw.api
+                .set_string_array(handle, name, &entries)
+                .map_err(|error| format!("Set mpv option {name}: {error}"))?;
+        }
+        for (name, entries) in launch.mpv_map_options(ytdl_path) {
+            raw.api
+                .set_string_map(handle, name, &entries)
+                .map_err(|error| format!("Set mpv option {name}: {error}"))?;
         }
         // SAFETY: Initialize is called once, on the startup worker.
         raw.api.check(unsafe { (raw.api.initialize)(handle) })?;

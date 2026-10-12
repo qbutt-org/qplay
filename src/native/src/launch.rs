@@ -8,7 +8,7 @@ pub struct LaunchOptions {
     pub ytdl_path: Option<String>,
     pub content: Option<ContentChoice>,
     options: Vec<(String, String)>,
-    ytdl_options: Vec<String>,
+    ytdl_options: Vec<(String, String)>,
     headers: Vec<String>,
     audio: Vec<String>,
     subtitles: Vec<String>,
@@ -92,13 +92,19 @@ impl LaunchOptions {
                     }
                 }
                 "ytdl-raw-options-append" => {
-                    if !matches!(value, "ignore-config=" | "no-plugin-dirs=")
-                        && !value.starts_with("js-runtimes=deno:")
-                        && !value.starts_with("cookies=")
-                    {
+                    let Some((key, option)) = value.split_once('=') else {
                         return Err("Unsupported extractor option.".into());
+                    };
+                    match key {
+                        "ignore-config" | "no-plugin-dirs" if option.is_empty() => {}
+                        "js-runtimes"
+                            if option
+                                .strip_prefix("deno:")
+                                .is_some_and(|path| Path::new(path).is_absolute()) => {}
+                        "cookies" if Path::new(option).is_absolute() => {}
+                        _ => return Err("Unsupported extractor option.".into()),
                     }
-                    launch.ytdl_options.push(value.into());
+                    launch.ytdl_options.push((key.into(), option.into()));
                 }
                 "http-header-fields-append" => {
                     let Some(specification) = value.strip_prefix('%') else {
@@ -135,35 +141,43 @@ impl LaunchOptions {
         Ok(launch)
     }
 
-    pub fn mpv_options(&self, default_ytdl_path: &Path) -> Vec<(String, String)> {
-        let ytdl_path = self
-            .ytdl_path
-            .as_deref()
-            .map(Path::new)
-            .unwrap_or(default_ytdl_path);
-        let scripts =
-            vec![format!("ytdl_hook-ytdl_path={}", ytdl_path.display()).replace('\\', "/")];
+    pub fn mpv_options(&self) -> &[(String, String)] {
+        &self.options
+    }
 
-        let mut options = self.options.clone();
-        options.push(("script-opts".into(), mpv_list(&scripts)));
+    pub fn mpv_array_options(&self) -> Vec<(&'static str, &[String])> {
+        let mut options = Vec::new();
         for (name, values) in [
-            ("ytdl-raw-options", &self.ytdl_options),
             ("http-header-fields", &self.headers),
             ("audio-files", &self.audio),
             ("sub-files", &self.subtitles),
         ] {
             if !values.is_empty() {
-                options.push((name.into(), mpv_list(values)));
+                options.push((name, values.as_slice()));
             }
         }
         options
     }
-}
 
-fn mpv_list(values: &[String]) -> String {
-    values
-        .iter()
-        .map(|value| value.replace('\\', "\\\\").replace(',', "\\,"))
-        .collect::<Vec<_>>()
-        .join(",")
+    pub fn mpv_map_options(
+        &self,
+        default_ytdl_path: &Path,
+    ) -> Vec<(&'static str, Vec<(String, String)>)> {
+        let ytdl_path = self
+            .ytdl_path
+            .as_deref()
+            .map(Path::new)
+            .unwrap_or(default_ytdl_path);
+        let mut options = vec![(
+            "script-opts",
+            vec![(
+                "ytdl_hook-ytdl_path".into(),
+                ytdl_path.to_string_lossy().replace('\\', "/"),
+            )],
+        )];
+        if !self.ytdl_options.is_empty() {
+            options.push(("ytdl-raw-options", self.ytdl_options.clone()));
+        }
+        options
+    }
 }
