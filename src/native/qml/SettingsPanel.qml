@@ -20,9 +20,9 @@ Popup {
     readonly property color optionColor: dark ? "#343638" : "#e9eef4"
 
     parent: host
-    x: parent.width - width - 22
+    x: root.host ? root.host.width - width - 22 : 0
     y: 76
-    width: Math.min(344, parent.width - 32)
+    width: root.host ? Math.min(344, root.host.width - 32) : 0
     padding: 20
     modal: true
     dim: true
