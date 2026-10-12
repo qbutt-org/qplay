@@ -290,11 +290,15 @@ Popup {
                 implicitHeight: 44
                 visible: root.backend.updateVersion.length > 0
                 enabled: root.backend.updateState !== "downloading"
-                text: root.backend.portable
-                    ? (root.russian ? qsTr("Скачать ZIP") : qsTr("Download ZIP"))
-                    : root.backend.updateState === "ready" || root.backend.updateState === "installFailed"
-                        ? (root.russian ? qsTr("Установить") : qsTr("Install"))
-                        : (root.russian ? qsTr("Обновить") : qsTr("Update"))
+                text: {
+                    if (root.backend.portable)
+                        return root.russian ? qsTr("Скачать ZIP") : qsTr("Download ZIP")
+                    if (root.backend.updateState === "ready")
+                        return root.russian ? qsTr("Установить") : qsTr("Install")
+                    if (root.backend.updateState === "installFailed" || root.backend.updateState === "downloadFailed")
+                        return root.russian ? qsTr("Повторить") : qsTr("Retry")
+                    return root.russian ? qsTr("Обновить") : qsTr("Update")
+                }
                 palette.buttonText: "#ffffff"
                 background: Rectangle {
                     radius: 7
@@ -305,7 +309,7 @@ Popup {
                 onClicked: {
                     if (root.backend.portable) {
                         Qt.openUrlExternally(root.backend.updateUrl)
-                    } else if (root.backend.updateState === "ready" || root.backend.updateState === "installFailed") {
+                    } else if (root.backend.updateState === "ready") {
                         if (root.backend.installUpdate())
                             Qt.quit()
                     } else {
@@ -346,7 +350,7 @@ Popup {
                 case "checkFailed":
                     return root.russian ? qsTr("Не удалось проверить обновления") : qsTr("Couldn't check for updates")
                 case "installFailed":
-                    return root.russian ? qsTr("Не удалось запустить установщик") : qsTr("Couldn't start the installer")
+                    return root.russian ? qsTr("Не удалось начать установку") : qsTr("Couldn't start installation")
                 default:
                     return ""
                 }

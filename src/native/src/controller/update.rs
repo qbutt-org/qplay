@@ -29,7 +29,7 @@ pub fn run_update_task(task: Box<UpdateTask>) {
     let cancel = task.cancel.clone();
     match task.operation {
         Operation::Check => {
-            let result = app_update::check();
+            let result = app_update::check(&cancel);
             if cancel.load(Ordering::Acquire) {
                 return;
             }
@@ -37,9 +37,10 @@ pub fn run_update_task(task: Box<UpdateTask>) {
                 let mut state = player.as_mut().rust_mut();
                 state.update_cancel = None;
                 match result {
-                    Ok(CheckResult::Unpublished) => state.update_state = "unpublished".into(),
-                    Ok(CheckResult::Current) => state.update_state = "current".into(),
-                    Ok(CheckResult::Available(release)) => {
+                    Ok(None) => return,
+                    Ok(Some(CheckResult::Unpublished)) => state.update_state = "unpublished".into(),
+                    Ok(Some(CheckResult::Current)) => state.update_state = "current".into(),
+                    Ok(Some(CheckResult::Available(release))) => {
                         state.update_version = QString::from(release.version.as_str());
                         state.update_release = Some(release);
                         state.update_state = "available".into();
@@ -156,7 +157,7 @@ impl ffi::PlayerController {
     pub(super) fn download_update(mut self: Pin<&mut Self>) {
         if !matches!(
             self.update_state.to_string().as_str(),
-            "available" | "downloadFailed"
+            "available" | "downloadFailed" | "installFailed"
         ) || self.portable
         {
             return;
@@ -169,6 +170,7 @@ impl ffi::PlayerController {
         let mut state = self.as_mut().rust_mut();
         state.update_progress = 0;
         state.update_error = QString::default();
+        state.update_installer = None;
         state.update_state = "downloading".into();
         let cancel = Arc::new(AtomicBool::new(false));
         state.update_cancel = Some(cancel.clone());

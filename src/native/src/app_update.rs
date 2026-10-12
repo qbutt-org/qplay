@@ -1,4 +1,5 @@
 use std::fs::{self, File, OpenOptions};
+use std::future::Future;
 use std::io::{Read, Write};
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -6,8 +7,8 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
+use reqwest::Client;
 use reqwest::StatusCode;
-use reqwest::blocking::Client;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use windows::Win32::System::JobObjects::IsProcessInJob;
@@ -56,45 +57,51 @@ struct GithubRelease {
     assets: Vec<AssetMetadata>,
 }
 
-pub fn check() -> Result<CheckResult, String> {
-    let client = client(Duration::from_secs(30))?;
-    let response = client
-        .get(RELEASE_URL)
-        .send()
-        .map_err(|error| format!("Check qplay release: {error}"))?;
-    if response.status() == StatusCode::NOT_FOUND {
-        return Ok(CheckResult::Unpublished);
-    }
-    let response = response
-        .error_for_status()
-        .map_err(|error| format!("Check qplay release: {error}"))?;
-    let mut json = Vec::new();
-    response
-        .take(MAX_RELEASE_JSON + 1)
-        .read_to_end(&mut json)
-        .map_err(|error| format!("Read qplay release: {error}"))?;
-    if json.len() as u64 > MAX_RELEASE_JSON {
-        return Err("qplay release metadata is too large.".into());
-    }
+pub fn check(cancel: &AtomicBool) -> Result<Option<CheckResult>, String> {
+    run_network(cancel, async {
+        let client = client(Duration::from_secs(30))?;
+        let mut response = client
+            .get(RELEASE_URL)
+            .send()
+            .await
+            .map_err(|error| format!("Check qplay release: {error}"))?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(CheckResult::Unpublished);
+        }
+        response = response
+            .error_for_status()
+            .map_err(|error| format!("Check qplay release: {error}"))?;
+        let mut json = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|error| format!("Read qplay release: {error}"))?
+        {
+            if json.len() as u64 + chunk.len() as u64 > MAX_RELEASE_JSON {
+                return Err("qplay release metadata is too large.".into());
+            }
+            json.extend_from_slice(&chunk);
+        }
 
-    let release: GithubRelease =
-        serde_json::from_slice(&json).map_err(|error| format!("Parse qplay release: {error}"))?;
-    let version = release
-        .tag_name
-        .strip_prefix('v')
-        .and_then(parse_version)
-        .ok_or("qplay release has an invalid version number.")?;
-    if version <= parse_version(VERSION.trim()).expect("pinned qplay version") {
-        return Ok(CheckResult::Current);
-    }
+        let release: GithubRelease = serde_json::from_slice(&json)
+            .map_err(|error| format!("Parse qplay release: {error}"))?;
+        let version = release
+            .tag_name
+            .strip_prefix('v')
+            .and_then(parse_version)
+            .ok_or("qplay release has an invalid version number.")?;
+        if version <= parse_version(VERSION.trim()).expect("pinned qplay version") {
+            return Ok(CheckResult::Current);
+        }
 
-    let setup = select_asset(&release, "qplay-setup.exe")?;
-    let portable = select_asset(&release, "qplay-portable.zip")?;
-    Ok(CheckResult::Available(Release {
-        version: release.tag_name[1..].into(),
-        setup,
-        portable_url: portable.url,
-    }))
+        let setup = select_asset(&release, "qplay-setup.exe")?;
+        let portable = select_asset(&release, "qplay-portable.zip")?;
+        Ok(CheckResult::Available(Release {
+            version: release.tag_name[1..].into(),
+            setup,
+            portable_url: portable.url,
+        }))
+    })
 }
 
 fn select_asset(release: &GithubRelease, name: &str) -> Result<VerifiedAsset, String> {
@@ -155,11 +162,12 @@ pub fn download(
         attempt
     ));
     let mut owns_partial = false;
-    let result = (|| {
+    let result = run_network(cancel, async {
         let client = client(Duration::from_secs(600))?;
         let mut response = client
             .get(&release.setup.url)
             .send()
+            .await
             .and_then(|response| response.error_for_status())
             .map_err(|error| format!("Download qplay update: {error}"))?;
         let mut file = OpenOptions::new()
@@ -170,24 +178,18 @@ pub fn download(
         owns_partial = true;
         let mut hash = Sha256::new();
         let mut received = 0_u64;
-        let mut buffer = [0_u8; 64 * 1024];
 
-        loop {
-            if cancel.load(Ordering::Acquire) {
-                return Ok(None);
-            }
-            let count = response
-                .read(&mut buffer)
-                .map_err(|error| format!("Read qplay update: {error}"))?;
-            if count == 0 {
-                break;
-            }
-            received += count as u64;
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|error| format!("Read qplay update: {error}"))?
+        {
+            received += chunk.len() as u64;
             if received > release.setup.size {
                 return Err("qplay update exceeds its published size.".into());
             }
-            hash.update(&buffer[..count]);
-            file.write_all(&buffer[..count])
+            hash.update(&chunk);
+            file.write_all(&chunk)
                 .map_err(|error| format!("Stage qplay update: {error}"))?;
             progress((received * 100 / release.setup.size) as i32);
         }
@@ -198,15 +200,15 @@ pub fn download(
             .map_err(|error| format!("Flush qplay update: {error}"))?;
         drop(file);
         if cancel.load(Ordering::Acquire) {
-            return Ok(None);
+            return Err("qplay update cancelled.".into());
         }
         if let Err(error) = move_new_file(&partial, &target) {
             if !verified_file(&target, release.setup.size, digest)? {
                 return Err(format!("Finish qplay update: {error}"));
             }
         }
-        Ok(Some(target))
-    })();
+        Ok(target)
+    });
     if owns_partial {
         let _ = fs::remove_file(&partial);
     }
@@ -251,7 +253,7 @@ fn verified_file(path: &Path, size: u64, digest: &str) -> Result<bool, String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(error) => return Err(format!("Inspect qplay update: {error}")),
     };
-    if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() != size {
+    if !metadata.is_file() || metadata.len() != size {
         return Ok(false);
     }
     let mut file = File::open(path).map_err(|error| format!("Read qplay update: {error}"))?;
@@ -269,11 +271,40 @@ fn verified_file(path: &Path, size: u64, digest: &str) -> Result<bool, String> {
     Ok(format!("{:x}", hash.finalize()) == digest)
 }
 
+fn run_network<T>(
+    cancel: &AtomicBool,
+    operation: impl Future<Output = Result<T, String>>,
+) -> Result<Option<T>, String> {
+    if cancel.load(Ordering::Acquire) {
+        return Ok(None);
+    }
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("Start qplay update network: {error}"))?;
+    let result = runtime.block_on(async {
+        tokio::select! {
+            biased;
+            _ = wait_for_cancel(cancel) => Ok(None),
+            result = operation => result.map(Some),
+        }
+    });
+    runtime.shutdown_timeout(Duration::from_secs(1));
+    result
+}
+
+async fn wait_for_cancel(cancel: &AtomicBool) {
+    while !cancel.load(Ordering::Acquire) {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 fn client(timeout: Duration) -> Result<Client, String> {
     Client::builder()
         .user_agent(format!("qplay/{}", VERSION.trim()))
         .https_only(true)
         .connect_timeout(Duration::from_secs(10))
+        .read_timeout(Duration::from_secs(30))
         .timeout(timeout)
         .build()
         .map_err(|error| format!("Create qplay update client: {error}"))
