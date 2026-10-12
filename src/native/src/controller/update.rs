@@ -99,7 +99,7 @@ impl ffi::PlayerController {
     pub(super) fn update_url(&self) -> QString {
         self.update_release
             .as_ref()
-            .map(|release| QString::from(release.portable_url()))
+            .map(|release| QString::from(release.portable_url.as_str()))
             .unwrap_or_default()
     }
 

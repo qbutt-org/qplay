@@ -32,7 +32,7 @@ pub enum CheckResult {
 pub struct Release {
     pub version: String,
     setup: VerifiedAsset,
-    portable_url: String,
+    pub portable_url: String,
 }
 
 #[derive(Deserialize)]
@@ -54,12 +54,6 @@ struct VerifiedAsset {
 struct GithubRelease {
     tag_name: String,
     assets: Vec<AssetMetadata>,
-}
-
-impl Release {
-    pub fn portable_url(&self) -> &str {
-        &self.portable_url
-    }
 }
 
 pub fn check() -> Result<CheckResult, String> {
@@ -140,20 +134,27 @@ pub fn download(
     let directory = data.join("updates");
     fs::create_dir_all(&directory)
         .map_err(|error| format!("Create qplay update directory: {error}"))?;
-    let target = directory.join(format!("qplay-v{}-{digest}-setup.exe", release.version));
-    if verified_file(&target, release.setup.size, digest)? {
-        return Ok(Some(target));
+    let cached = directory.join(format!("qplay-v{}-{digest}-setup.exe", release.version));
+    if verified_file(&cached, release.setup.size, digest)? {
+        return Ok(Some(cached));
     }
-    if fs::symlink_metadata(&target).is_ok() {
-        return Err("An invalid qplay update already occupies the staging path.".into());
-    }
-
+    let attempt = NEXT_STAGE.fetch_add(1, Ordering::Relaxed);
+    let target = if fs::symlink_metadata(&cached).is_ok() {
+        directory.join(format!(
+            "qplay-v{}-{digest}-{}-{attempt}-setup.exe",
+            release.version,
+            std::process::id()
+        ))
+    } else {
+        cached
+    };
     let partial = directory.join(format!(
         "qplay-v{}-{}-{}.partial",
         release.version,
         std::process::id(),
-        NEXT_STAGE.fetch_add(1, Ordering::Relaxed)
+        attempt
     ));
+    let mut owns_partial = false;
     let result = (|| {
         let client = client(Duration::from_secs(600))?;
         let mut response = client
@@ -166,6 +167,7 @@ pub fn download(
             .create_new(true)
             .open(&partial)
             .map_err(|error| format!("Stage qplay update: {error}"))?;
+        owns_partial = true;
         let mut hash = Sha256::new();
         let mut received = 0_u64;
         let mut buffer = [0_u8; 64 * 1024];
@@ -205,7 +207,9 @@ pub fn download(
         }
         Ok(Some(target))
     })();
-    let _ = fs::remove_file(&partial);
+    if owns_partial {
+        let _ = fs::remove_file(&partial);
+    }
     result
 }
 
