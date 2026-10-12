@@ -55,23 +55,32 @@ namespace QPlay
             using (var job = new EngineJob())
             using (var player = Native.StartEngine(start, job))
             {
-                var icon = Native.LoadPlayerIcon();
+                var smallIcon = IntPtr.Zero;
+                var largeIcon = IntPtr.Zero;
                 try
                 {
-                    for (var attempt = 0; attempt < 100 && !player.HasExited; attempt++)
+                    while (!player.HasExited)
                     {
                         player.Refresh();
-                        if (player.MainWindowHandle != IntPtr.Zero)
+                        var window = player.MainWindowHandle;
+                        if (window != IntPtr.Zero)
                         {
-                            Native.SetIcon(player.MainWindowHandle, icon);
+                            smallIcon = Native.LoadPlayerIcon(window, true);
+                            largeIcon = Native.LoadPlayerIcon(window, false);
+                            Native.SetIcon(window, smallIcon, largeIcon);
                             break;
                         }
                         Thread.Sleep(50);
                     }
+
                     player.WaitForExit();
                     return player.ExitCode;
                 }
-                finally { Native.DestroyIcon(icon); }
+                finally
+                {
+                    Native.DestroyIcon(smallIcon);
+                    Native.DestroyIcon(largeIcon);
+                }
             }
         }
     }

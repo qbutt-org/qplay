@@ -40,15 +40,24 @@ namespace QPlay
             return result.Append('\\', slashes * 2).Append('"').ToString();
         }
 
-        internal static IntPtr LoadPlayerIcon()
+        internal static IntPtr LoadPlayerIcon(IntPtr window, bool small)
         {
-            return LoadImage(IntPtr.Zero, System.IO.Path.Combine(Program.InstallDirectory, "qplay.ico"), 1, 256, 256, 0x10);
+            const int smallIconWidth = 49;
+            const int smallIconHeight = 50;
+            const int largeIconWidth = 11;
+            const int largeIconHeight = 12;
+
+            var dpi = GetDpiForWindow(window);
+            var width = GetSystemMetricsForDpi(small ? smallIconWidth : largeIconWidth, dpi);
+            var height = GetSystemMetricsForDpi(small ? smallIconHeight : largeIconHeight, dpi);
+
+            return LoadImage(IntPtr.Zero, System.IO.Path.Combine(Program.InstallDirectory, "qplay.ico"), 1, width, height, 0x10);
         }
 
-        internal static void SetIcon(IntPtr window, IntPtr icon)
+        internal static void SetIcon(IntPtr window, IntPtr smallIcon, IntPtr largeIcon)
         {
-            SendMessage(window, 0x80, new IntPtr(0), icon);
-            SendMessage(window, 0x80, new IntPtr(1), icon);
+            SendMessage(window, 0x80, new IntPtr(0), smallIcon);
+            SendMessage(window, 0x80, new IntPtr(1), largeIcon);
         }
 
         internal static void StartInstaller(string executable, string arguments)
@@ -143,6 +152,10 @@ namespace QPlay
             IntPtr environment, string directory, ref StartupInfo startup, out ProcessInformation process);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)]
         private static extern IntPtr LoadImage(IntPtr instance, string name, uint type, int width, int height, uint flags);
+        [DllImport("user32.dll")]
+        private static extern uint GetDpiForWindow(IntPtr window);
+        [DllImport("user32.dll")]
+        private static extern int GetSystemMetricsForDpi(int index, uint dpi);
         [DllImport("user32.dll")]
         private static extern IntPtr SendMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
         [DllImport("user32.dll")]
