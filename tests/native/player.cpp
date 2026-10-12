@@ -11,6 +11,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QImage>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMetaObject>
@@ -530,13 +531,56 @@ int main(int argc, char *argv[])
                     2 * 60 * 1000, "Frame generation output was not verified");
                 require(backend.gpuError().isEmpty(), "Frame generation returned an error");
                 tick();
+                const QImage firstVideo = target.toImage().copy(0, 88, 1280, 500);
+                const double firstPosition = backend.position();
+                QElapsedTimer playback;
+                playback.start();
+                while (playback.elapsed() < 5000)
+                    tick();
+                const double playbackAdvance = backend.position() - firstPosition;
+                require(playbackAdvance >= 4.0 && backend.framegenStatus() == QStringLiteral("active"),
+                    "Frame generation did not sustain real-time playback");
+                require(target.toImage().copy(0, 88, 1280, 500) != firstVideo,
+                    "Frame generation did not render changing video");
+                const auto observation = backend.framegenObservation();
+                require(observation.source_fps > 0 && observation.target_fps > observation.source_fps,
+                    "Frame generation did not increase the source frame rate");
+                require(std::abs(observation.measured_fps - observation.target_fps) <= observation.target_fps * 0.03,
+                    "The rendered filter did not produce the target frame rate");
+                require(observation.output_width > 0 && observation.output_height > 0
+                    && observation.filter_name == "@mpv-framegen",
+                    "The rendered frame generation output was not present");
                 require(target.toImage().save(evidencePrefix + QStringLiteral(".framegen.png")),
                     "Save generated-frame playback composition failed");
                 evidence[QStringLiteral("framegenActive")] = true;
+                evidence[QStringLiteral("framegenPlaybackAdvanceSeconds")] = playbackAdvance;
+                evidence[QStringLiteral("framegenWallSeconds")] = playback.elapsed() / 1000.0;
+                evidence[QStringLiteral("framegenRenderedVideoChanged")] = true;
                 evidence[QStringLiteral("framegenChoice")] = backend.framegenChoice();
                 evidence[QStringLiteral("framegenStatus")] = backend.framegenStatus();
+                evidence[QStringLiteral("framegenSourceFps")] = observation.source_fps;
+                evidence[QStringLiteral("framegenTargetFps")] = observation.target_fps;
+                evidence[QStringLiteral("framegenMeasuredFps")] = observation.measured_fps;
+                evidence[QStringLiteral("framegenOutputWidth")] = static_cast<int>(observation.output_width);
+                evidence[QStringLiteral("framegenOutputHeight")] = static_cast<int>(observation.output_height);
+                evidence[QStringLiteral("framegenFilter")] = QString::fromUtf8(
+                    observation.filter_name.data(), observation.filter_name.size());
+                backend.changeShader(QStringLiteral("anime4k_a"));
+                waitGpu([&] { return backend.framegenStatus() == QStringLiteral("off")
+                    && backend.framegenChoice() == QStringLiteral("off")
+                    && backend.effectiveShader() == QStringLiteral("anime4k_a"); }, 15 * 1000,
+                    "Manual Anime4K did not replace active frame generation");
+                require(backend.framegenObservation().filter_name.empty(),
+                    "Manual Anime4K left the frame generation filter active");
+                evidence[QStringLiteral("manualShaderStoppedFramegen")] = true;
                 backend.stop();
                 wait([&] { return !backend.mediaLoaded(); }, "Stopping generated-frame playback failed");
+                Qplay::PlayerController restored;
+                restored.configure(preferences, QStringLiteral("en_US"));
+                require(restored.shaderChoice() == QStringLiteral("anime4k_a")
+                    && restored.framegenChoice() == QStringLiteral("off"),
+                    "Manual GPU choices were not saved together");
+                evidence[QStringLiteral("manualGpuChoicesPersisted")] = true;
             }
             root.reset();
             gl.makeCurrent(&surface);

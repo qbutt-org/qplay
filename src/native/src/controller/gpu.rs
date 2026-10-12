@@ -322,6 +322,33 @@ fn probe(input: ProbeInput, cancel: &AtomicBool, on_prepare: impl FnOnce()) -> P
 }
 
 impl ffi::PlayerController {
+    pub(super) fn framegen_observation(&self) -> ffi::FramegenObservation {
+        let session = self.session.as_ref();
+        let filter_present = session
+            .and_then(|session| session.text("vf"))
+            .is_some_and(|filters| filters.contains("mpv-framegen"));
+        ffi::FramegenObservation {
+            source_fps: self
+                .gpu
+                .timing
+                .map_or(0.0, |timing| timing.source_rate.fps()),
+            target_fps: self
+                .gpu
+                .selection
+                .map_or(0.0, |selection| selection.target.rate.fps()),
+            measured_fps: session
+                .and_then(|session| session.number("estimated-vf-fps"))
+                .unwrap_or(0.0),
+            output_width: session
+                .and_then(|session| session.number("video-out-params/w"))
+                .unwrap_or(0.0) as u32,
+            output_height: session
+                .and_then(|session| session.number("video-out-params/h"))
+                .unwrap_or(0.0) as u32,
+            filter_name: if filter_present { "@mpv-framegen" } else { "" }.into(),
+        }
+    }
+
     pub(super) fn set_display_rate(mut self: Pin<&mut Self>, fps: f64) {
         let rate = Rate::from_fps(fps);
         if self.gpu.display_rate == rate {
@@ -771,6 +798,7 @@ impl ffi::PlayerController {
         let had_filter = self.gpu.active_filter.is_some() || self.gpu.filter.is_some();
         if manual_non_fsr {
             self.as_mut().rust_mut().gpu.cancel();
+            self.as_mut().rust_mut().gpu.framegen_choice = FramegenChoice::Off;
         }
         self.as_mut().rust_mut().gpu.shader_choice = choice;
         self.as_mut().save_preferences();

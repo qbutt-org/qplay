@@ -36,6 +36,15 @@ pub mod ffi {
         Failed,
     }
 
+    struct FramegenObservation {
+        source_fps: f64,
+        target_fps: f64,
+        measured_fps: f64,
+        output_width: u32,
+        output_height: u32,
+        filter_name: String,
+    }
+
     #[namespace = ""]
     unsafe extern "C++" {
         include!("cxx-qt-lib/qstring.h");
@@ -157,6 +166,8 @@ pub mod ffi {
         fn initialize(self: Pin<&mut Self>, library: &QString, profile: &QString);
         #[cxx_name = "setDisplayRate"]
         fn set_display_rate(self: Pin<&mut Self>, fps: f64);
+        #[cxx_name = "framegenObservation"]
+        fn framegen_observation(&self) -> FramegenObservation;
         #[qinvokable]
         #[rust_name = "change_language"]
         fn changeLanguage(self: Pin<&mut Self>, language: &QString);
