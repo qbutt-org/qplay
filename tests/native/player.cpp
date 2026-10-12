@@ -26,6 +26,7 @@
 #include <QQuickRenderTarget>
 #include <QQuickStyle>
 #include <QQuickWindow>
+#include <QStringList>
 #include <QThread>
 #include <QThreadPool>
 
@@ -118,11 +119,12 @@ int main(int argc, char *argv[])
     QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
     QQuickStyle::setStyle(QStringLiteral("Basic"));
     QGuiApplication app(argc, argv);
-    const QString library = QString::fromUtf8(argv[1]);
-    const QString media = QString::fromUtf8(argv[2]);
-    const QString secondMedia = QString::fromUtf8(argv[3]);
-    const QString profile = QString::fromUtf8(argv[4]);
-    const QString evidencePrefix = QString::fromUtf8(argv[5]);
+    const QStringList arguments = app.arguments();
+    const QString library = arguments.at(1);
+    const QString media = arguments.at(2);
+    const QString secondMedia = arguments.at(3);
+    const QString profile = arguments.at(4);
+    const QString evidencePrefix = arguments.at(5);
     QJsonObject evidence;
     int exitCode = 0;
 
@@ -265,6 +267,11 @@ int main(int argc, char *argv[])
             require(pauseButton != nullptr, "Pause control unavailable");
             hover(window, *pauseButton);
             wait([&] { return pauseButton->isEnabled(); }, "Hover did not reveal transport controls");
+            auto *seekSlider = root->findChild<QQuickItem *>(QStringLiteral("seekSlider"));
+            auto *volumeSlider = root->findChild<QQuickItem *>(QStringLiteral("volumeSlider"));
+            require(seekSlider != nullptr && seekSlider->height() >= 44
+                && volumeSlider != nullptr && volumeSlider->height() >= 44,
+                "Player sliders need 44-pixel input targets");
             click(window, *pauseButton);
             wait([&] { return backend.paused(); }, "QML pause input did not reach mpv");
             const auto pausedPosition = backend.position();

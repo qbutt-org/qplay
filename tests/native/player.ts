@@ -19,11 +19,11 @@ if (!outputFromRepository.startsWith("..") && !outputFromRepository.includes(":"
 
 const executable = resolve(buildDirectory, "qplay-native-acceptance.exe");
 const library = resolve(runtimeDirectory, "engine/libmpv-2.dll");
-const profile = join(output, `profile-${randomUUID()}`);
+const profile = join(output, `профиль-${randomUUID()}`);
 const evidencePrefix = join(output, "player");
 
 await mkdir(profile, { recursive: true });
-const secondMedia = join(profile, "second-sintel.mp4");
+const secondMedia = join(profile, "второй-sintel.mp4");
 await copyFile(resolve(mediaFile), secondMedia);
 const argumentsList = [library, resolve(mediaFile), secondMedia, profile, evidencePrefix];
 const child = spawn(executable, argumentsList, {

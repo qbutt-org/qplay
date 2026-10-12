@@ -227,7 +227,7 @@ Item {
                     id: seekSlider
                     objectName: "seekSlider"
                     Layout.fillWidth: true
-                    implicitHeight: 32
+                    implicitHeight: 44
                     enabled: root.backend.mediaLoaded
                     from: 0
                     to: Math.max(root.backend.duration, 1)
@@ -330,7 +330,7 @@ Item {
                         id: volumeSlider
                         objectName: "volumeSlider"
                         Layout.preferredWidth: 96
-                        implicitHeight: 28
+                        implicitHeight: 44
                         from: 0
                         to: 100
                         value: root.backend.volume
@@ -395,8 +395,8 @@ Item {
 
         background: Rectangle {
             radius: 12
-            color: "#202123"
-            border.color: "#505255"
+            color: "#d83d3f42"
+            border.color: "#80ffffff"
         }
 
         contentItem: Column {
@@ -413,7 +413,7 @@ Item {
                 }
                 background: Rectangle {
                     radius: 7
-                    color: fileItem.hovered ? "#384b60" : "transparent"
+                    color: fileItem.hovered ? "#343638" : "transparent"
                 }
                 contentItem: RowLayout {
                     spacing: 12
@@ -447,7 +447,7 @@ Item {
                 }
                 background: Rectangle {
                     radius: 7
-                    color: linkItem.hovered ? "#384b60" : "transparent"
+                    color: linkItem.hovered ? "#343638" : "transparent"
                 }
                 contentItem: RowLayout {
                     spacing: 12

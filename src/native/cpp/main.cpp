@@ -9,17 +9,23 @@
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QStandardPaths>
+#include <QStringList>
 #include <QThreadPool>
 
 #include "qplay_native/src/controller.cxxqt.h"
 
 int main(int argc, char *argv[])
 {
+    QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
+    QQuickStyle::setStyle(QStringLiteral("Basic"));
+    QGuiApplication app(argc, argv);
+
     QString media;
     QString profile;
-    for (int i = 1; i < argc; ++i)
+    const QStringList arguments = app.arguments();
+    for (int i = 1; i < arguments.size(); ++i)
     {
-        const QString argument = QString::fromUtf8(argv[i]);
+        const QString &argument = arguments.at(i);
         if (argument.startsWith(QStringLiteral("--profile-dir=")))
             profile = argument.sliced(14);
         else if (argument.startsWith(u'-') || !media.isEmpty())
@@ -30,9 +36,6 @@ int main(int argc, char *argv[])
         else
             media = argument;
     }
-    QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
-    QQuickStyle::setStyle(QStringLiteral("Basic"));
-    QGuiApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("qplay"));
     app.setWindowIcon(QIcon(QStringLiteral(":/assets/qplay.ico")));
     const QString installDirectory = QCoreApplication::applicationDirPath();
