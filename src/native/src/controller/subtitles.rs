@@ -11,8 +11,8 @@ use super::ffi;
 use crate::preferences::SubtitleTranslationPreferences;
 use crate::subtitles::{
     MpvEmbeddedTrack, PlaybackMedia, SubtitleFormat, SubtitleIdentity, SubtitleService,
-    SubtitleSourceError, SubtitleTranslationOptions, VerifiedMediaTools, extract_local_embedded,
-    verify_embedded_track, window_bounds,
+    SubtitleSourceError, SubtitleTranslationOptions, VerifiedMediaTools, extract_indexed_matroska,
+    extract_local_embedded, verify_embedded_track, window_bounds,
 };
 use crate::track_model::Track;
 
@@ -135,8 +135,6 @@ async fn translate_window(
         };
         (document, identity)
     } else {
-        let media = task.media.path().ok_or("unsupported")?;
-        let tools = VerifiedMediaTools::from_library(&task.library).map_err(source_status)?;
         let selected = MpvEmbeddedTrack {
             mpv_id: task.track.id,
             ff_index: task.track.ff_index,
@@ -145,16 +143,29 @@ async fn translate_window(
             current_demuxer: task.demuxer,
             origin_ms: task.origin_ms,
         };
-        let track = verify_embedded_track(media, &tools, &selected, task.cancelled.clone())
-            .await
-            .map_err(source_status)?;
         let (start, end) = window_bounds(task.position_ms).map_err(|_| "unsupported")?;
-        let document =
-            extract_local_embedded(media, &tools, &track, start, end, task.cancelled.clone())
+        if let Some(media) = task.media.path() {
+            let tools = VerifiedMediaTools::from_library(&task.library).map_err(source_status)?;
+            let track = verify_embedded_track(media, &tools, &selected, task.cancelled.clone())
                 .await
                 .map_err(source_status)?;
-        let identity = track.identity(digest);
-        (document, identity)
+            let document =
+                extract_local_embedded(media, &tools, &track, start, end, task.cancelled.clone())
+                    .await
+                    .map_err(source_status)?;
+            (document, track.identity(digest))
+        } else {
+            extract_indexed_matroska(
+                task.media.clone(),
+                selected,
+                start,
+                end,
+                digest,
+                task.cancelled.clone(),
+            )
+            .await
+            .map_err(source_status)?
+        }
     };
     let options = SubtitleTranslationOptions {
         identity,

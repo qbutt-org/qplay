@@ -66,11 +66,15 @@ type Result<T> = std::result::Result<T, DemuxError>;
 
 pub(crate) const MAX_METADATA_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_FRAME_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_CUED_SUBTITLE_BYTES: u64 = 8 * 1024 * 1024;
 pub(crate) const MAX_COLLECTION_ENTRIES: usize = 65_536;
 
 pub(crate) fn checked_allocation_size(size: u64, limit: u64) -> Result<usize> {
     if size > limit {
-        return Err(DemuxError::ResourceLimitExceeded { declared: size, limit });
+        return Err(DemuxError::ResourceLimitExceeded {
+            declared: size,
+            limit,
+        });
     }
     Ok(usize::try_from(size)?)
 }
@@ -1403,7 +1407,7 @@ impl<R: Read + Seek> ParsableElement<R> for SeekEntry {
 #[derive(Clone, Debug)]
 struct CuePoint {
     time: u64,
-    track_position: CueTrackPositions,
+    track_positions: Vec<CueTrackPositions>,
 }
 
 impl<R: Read + Seek> ParsableElement<R> for CuePoint {
@@ -1411,12 +1415,24 @@ impl<R: Read + Seek> ParsableElement<R> for CuePoint {
 
     fn new(r: &mut R, fields: &[(ElementId, ElementData)]) -> Result<Self> {
         let time = find_unsigned(fields, ElementId::CueTime)?;
-        let track_position =
-            parse_child::<_, CueTrackPositions>(r, fields, ElementId::CueTrackPositions)?;
+        let mut track_positions = Vec::new();
+        for (_, data) in fields
+            .iter()
+            .filter(|(id, _)| *id == ElementId::CueTrackPositions)
+        {
+            let ElementData::Location { offset, size } = data else {
+                return Err(DemuxError::UnexpectedDataType);
+            };
+            let position_fields = collect_children(r, *offset, *size)?;
+            track_positions.push(CueTrackPositions::new(r, &position_fields)?);
+        }
+        if track_positions.is_empty() {
+            return Err(DemuxError::ElementNotFound(ElementId::CueTrackPositions));
+        }
 
         Ok(Self {
             time,
-            track_position,
+            track_positions,
         })
     }
 }
@@ -1424,11 +1440,26 @@ impl<R: Read + Seek> ParsableElement<R> for CuePoint {
 /// Contain positions for different tracks corresponding to the timestamp.
 #[derive(Clone, Debug)]
 struct CueTrackPositions {
-    _track: u64,
+    track: u64,
     cluster_position: u64,
     relative_position: Option<u64>,
-    _duration: Option<u64>,
+    duration: Option<u64>,
     _block_number: Option<u64>,
+}
+
+/// An indexed subtitle block with an explicit duration and block position.
+#[derive(Clone, Copy, Debug)]
+pub struct SubtitleCue {
+    /// Timestamp in segment ticks.
+    pub timestamp: u64,
+    /// Duration in segment ticks.
+    pub duration: u64,
+    /// Absolute position of the containing Cluster element.
+    pub cluster_position: u64,
+    /// Position of the Block or BlockGroup relative to Cluster data.
+    pub relative_position: u64,
+    /// Matroska TrackNumber.
+    pub track: u64,
 }
 
 impl<R: Read + Seek> ParsableElement<R> for CueTrackPositions {
@@ -1442,10 +1473,10 @@ impl<R: Read + Seek> ParsableElement<R> for CueTrackPositions {
         let block_number = try_find_unsigned(fields, ElementId::CueBlockNumber)?;
 
         Ok(Self {
-            _track: track,
+            track,
             cluster_position,
             relative_position,
-            _duration: duration,
+            duration,
             _block_number: block_number,
         })
     }
@@ -1505,9 +1536,14 @@ impl<R: Read + Seek> MatroskaFile<R> {
         )?;
 
         if let Some(cue_points) = cue_points.as_mut() {
-            cue_points
-                .iter_mut()
-                .for_each(|p| p.track_position.cluster_position += segment_data_offset);
+            for point in cue_points {
+                for position in &mut point.track_positions {
+                    position.cluster_position = position
+                        .cluster_position
+                        .checked_add(segment_data_offset)
+                        .ok_or(DemuxError::InvalidEbmlDataSize)?;
+                }
+            }
         }
 
         let chapters = try_parse_top_element_collection::<_, EditionEntry>(
@@ -1553,6 +1589,156 @@ impl<R: Read + Seek> MatroskaFile<R> {
     /// Returns the tracks of the file.
     pub fn tracks(&self) -> &[TrackEntry] {
         self.tracks.as_ref()
+    }
+
+    /// Returns the exact subtitle index only when every cue for this track has
+    /// the duration and block offset needed to find overlapping events.
+    pub fn subtitle_cues(&self, track: u64) -> Option<Vec<SubtitleCue>> {
+        let mut cues = Vec::new();
+        for point in self.cue_points.as_ref()? {
+            for position in point
+                .track_positions
+                .iter()
+                .filter(|position| position.track == track)
+            {
+                cues.push(SubtitleCue {
+                    timestamp: point.time,
+                    duration: position.duration.filter(|duration| *duration > 0)?,
+                    cluster_position: position.cluster_position,
+                    relative_position: position.relative_position?,
+                    track,
+                });
+            }
+        }
+        (!cues.is_empty()).then_some(cues)
+    }
+
+    /// Reads one subtitle block directly from its Cue without decoding video.
+    pub fn read_subtitle_cue(
+        &mut self,
+        cue: SubtitleCue,
+        frame: &mut Frame,
+    ) -> Result<Option<Vec<u8>>> {
+        let (cluster_data, cluster_size) = expect_master(
+            &mut self.file,
+            ElementId::Cluster,
+            Some(cue.cluster_position),
+        )?;
+        if cue.relative_position >= cluster_size {
+            return Err(DemuxError::InvalidBlockSize);
+        }
+        let block_position = cluster_data
+            .checked_add(cue.relative_position)
+            .ok_or(DemuxError::InvalidBlockSize)?;
+        let cluster_end = cluster_data
+            .checked_add(cluster_size)
+            .ok_or(DemuxError::InvalidBlockSize)?;
+
+        let mut cluster_timestamp = None;
+        for _ in 0..16 {
+            if self.file.stream_position()? >= block_position {
+                break;
+            }
+            let (id, data) = next_element(&mut self.file)?;
+            if id == ElementId::Timestamp {
+                let ElementData::Unsigned(timestamp) = data else {
+                    return Err(DemuxError::UnexpectedDataType);
+                };
+                cluster_timestamp = Some(timestamp);
+                break;
+            }
+            if let ElementData::Location { offset, size } = data {
+                self.file.seek(SeekFrom::Start(offset + size))?;
+            }
+        }
+        let cluster_timestamp =
+            cluster_timestamp.ok_or(DemuxError::ElementNotFound(ElementId::Timestamp))?;
+
+        self.file.seek(SeekFrom::Start(block_position))?;
+        let (id, data) = next_element(&mut self.file)?;
+        let (offset, size, simple, addition) = match (id, data) {
+            (ElementId::SimpleBlock, ElementData::Location { offset, size }) => {
+                (offset, size, true, None)
+            }
+            (ElementId::BlockGroup, ElementData::Location { offset, size }) => {
+                let fields = collect_children(&mut self.file, offset, size)?;
+                if try_find_unsigned(&fields, ElementId::BlockDuration)? != Some(cue.duration) {
+                    return Err(DemuxError::InvalidBlockSize);
+                }
+                let mut addition = None;
+                if let Some((_, ElementData::Location { offset, size })) = fields
+                    .iter()
+                    .find(|(id, _)| *id == ElementId::BlockAdditions)
+                {
+                    let additions = collect_children(&mut self.file, *offset, *size)?;
+                    for (_, data) in additions
+                        .iter()
+                        .filter(|(id, _)| *id == ElementId::BlockMore)
+                    {
+                        let ElementData::Location { offset, size } = data else {
+                            return Err(DemuxError::UnexpectedDataType);
+                        };
+                        let fields = collect_children(&mut self.file, *offset, *size)?;
+                        if try_find_unsigned(&fields, ElementId::BlockAddId)?.unwrap_or(1) != 1 {
+                            continue;
+                        }
+                        if addition.is_some() {
+                            return Err(DemuxError::InvalidBlockSize);
+                        }
+                        if let Some((_, ElementData::Location { size, .. })) = fields
+                            .iter()
+                            .find(|(id, _)| *id == ElementId::BlockAdditional)
+                        {
+                            if *size > 64 * 1024 {
+                                return Err(DemuxError::InvalidBlockSize);
+                            }
+                        }
+                        addition =
+                            try_find_binary(&mut self.file, &fields, ElementId::BlockAdditional)?;
+                    }
+                }
+                let block = fields
+                    .iter()
+                    .find(|(id, _)| *id == ElementId::Block)
+                    .ok_or(DemuxError::ElementNotFound(ElementId::Block))?;
+                let ElementData::Location { offset, size } = block.1 else {
+                    return Err(DemuxError::UnexpectedDataType);
+                };
+                (offset, size, false, addition)
+            }
+            (found, _) => {
+                return Err(DemuxError::UnexpectedElement((
+                    ElementId::BlockGroup,
+                    found,
+                )));
+            }
+        };
+        if offset
+            .checked_add(size)
+            .is_none_or(|block_end| block_end > cluster_end)
+        {
+            return Err(DemuxError::InvalidBlockSize);
+        }
+        self.queued_frames.clear();
+        self.file.seek(SeekFrom::Start(offset))?;
+        parse_laced_frames(
+            &mut self.file,
+            &mut self.queued_frames,
+            size,
+            cluster_timestamp,
+            offset,
+            simple,
+        )?;
+        if self.queued_frames.len() != 1
+            || self.queued_frames[0].track != cue.track
+            || self.queued_frames[0].timestamp != cue.timestamp
+            || self.queued_frames[0].size > MAX_CUED_SUBTITLE_BYTES
+        {
+            return Err(DemuxError::InvalidBlockSize);
+        }
+        self.try_pop_frame(frame)?;
+        frame.duration = Some(cue.duration);
+        Ok(addition)
     }
 
     /// Returns the chapters of the file.
@@ -1728,9 +1914,12 @@ impl<R: Read + Seek> MatroskaFile<R> {
 
             if let Some(point) = cue_points.get(seek_pos) {
                 if point.time <= seek_timestamp {
-                    let mut target_offset = point.track_position.cluster_position;
+                    let Some(position) = point.track_positions.first() else {
+                        return Ok(cluster_start);
+                    };
+                    let mut target_offset = position.cluster_position;
 
-                    if let Some(relative_position) = point.track_position.relative_position {
+                    if let Some(relative_position) = position.relative_position {
                         let (cluster_data_offset, cluster_timestamp) =
                             self.get_cluster_offset_and_timestamp(cluster_start)?;
                         self.cluster_timestamp = cluster_timestamp;

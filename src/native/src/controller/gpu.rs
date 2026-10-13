@@ -414,8 +414,7 @@ impl ffi::PlayerController {
             stream_filename: session.text("stream-open-filename"),
             ytdl_result: session.text("user-data/mpv/ytdl/json-subprocess-result"),
             http_headers: session
-                .text("http-header-fields")
-                .and_then(|value| serde_json::from_str(&value).ok())
+                .string_array("http-header-fields")
                 .unwrap_or_default(),
             http_proxy: session.text("http-proxy"),
             user_agent: session.text("user-agent"),

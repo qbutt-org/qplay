@@ -80,6 +80,15 @@ qint64 selectedSubtitle(Qplay::TrackModel *model)
     return -1;
 }
 
+int brightPixels(const QImage &image)
+{
+    int count = 0;
+    for (int y = 0; y < image.height(); y += 4)
+        for (int x = 0; x < image.width(); x += 4)
+            count += qGray(image.pixel(x, y)) > 120;
+    return count;
+}
+
 QQuickItem *findVisualItem(QQuickItem *parent, const QString &name)
 {
     if (!parent)
@@ -134,6 +143,7 @@ int main(int argc, char *argv[])
     int exitCode = 0;
     bool pendingCatalogCancellation = false;
     const QString networkSubtitle = qEnvironmentVariable("QPLAY_SUBTITLE_HTTP_QA");
+    const bool embeddedNetworkQa = qEnvironmentVariableIsSet("QPLAY_SUBTITLE_MKV_QA");
 
     try
     {
@@ -187,7 +197,7 @@ int main(int argc, char *argv[])
             backend.changeLanguage(QStringLiteral("en"));
             backend.changeAppearance(QStringLiteral("dark"));
             backend.changeFramegen(QStringLiteral("off"));
-            if (!networkSubtitle.isEmpty())
+            if (!networkSubtitle.isEmpty() || embeddedNetworkQa)
             {
                 QStringList launch;
                 for (const QString &header : {QStringLiteral("Authorization: fixture-authorization"), QStringLiteral("Cookie: fixture-cookie")})
@@ -279,6 +289,113 @@ int main(int argc, char *argv[])
             backend.initialize(library + QStringLiteral(".missing"), profile);
             backend.initialize(library, profile);
             wait([&] { return backend.engineReady(); }, "Initialize actual Rust/mpv session timed out");
+            if (embeddedNetworkQa)
+            {
+                backend.openMedia(media);
+                wait([&] { return backend.mediaLoaded() && backend.position() > 0.5; },
+                    "Remote embedded Matroska did not play");
+                qint64 subtitleId = selectedSubtitle(backend.subtitleTracks());
+                if (subtitleId < 0)
+                {
+                    for (int row = 0; row < backend.subtitleTracks()->rowCount({}); ++row)
+                    {
+                        const auto index = backend.subtitleTracks()->index(row, 0, {});
+                        if (backend.subtitleTracks()->data(index, 257).toString() == QStringLiteral("sub"))
+                        {
+                            subtitleId = backend.subtitleTracks()->data(index, 256).toLongLong();
+                            break;
+                        }
+                    }
+                }
+                require(subtitleId > 0, "No remote embedded text track was exposed");
+                backend.selectTrack(QStringLiteral("sub"), subtitleId);
+                wait([&] { return selectedSubtitle(backend.subtitleTracks()) == subtitleId; },
+                    "Remote embedded subtitle selection failed");
+                backend.seek(12.5);
+                wait([&] { return std::abs(backend.position() - 12.5) < 0.2; },
+                    "Remote embedded subtitle seek failed");
+                backend.togglePause();
+                wait([&] { return backend.paused(); }, "Pause remote subtitle frame failed");
+                backend.loadSubtitleModels();
+                wait([&] { return !backend.subtitleModels().isEmpty(); },
+                    "Embedded subtitle model catalog did not arrive");
+                backend.changeSubtitleModel(backend.subtitleModels().first());
+                wait([&] { return !backend.subtitleEfforts().isEmpty(); },
+                    "Embedded subtitle efforts did not arrive");
+                backend.changeSubtitleEffort(backend.subtitleEfforts().first());
+                backend.changeSubtitleTarget(QStringLiteral("ru"));
+                const QRect captionArea(140, 100, 1000, 150);
+                auto original = target.toImage().copy(captionArea);
+                QElapsedTimer originalWait;
+                originalWait.start();
+                while (brightPixels(original) < 50 && originalWait.elapsed() < 5000)
+                {
+                    tick();
+                    original = target.toImage().copy(captionArea);
+                }
+                require(brightPixels(original) >= 50, "Original embedded caption was not rendered");
+                backend.changeSubtitleTranslation(true);
+                QElapsedTimer translationWait;
+                translationWait.start();
+                while (!(backend.subtitleStatus() == QStringLiteral("ready")
+                    && selectedSubtitle(backend.subtitleTracks()) == -1)
+                    && translationWait.elapsed() < 15000)
+                    tick();
+                if (backend.subtitleStatus() != QStringLiteral("ready")
+                    || selectedSubtitle(backend.subtitleTracks()) != -1)
+                {
+                    throw std::runtime_error(QStringLiteral("Cached embedded translation did not become active: status=%1 selection=%2 active=%3")
+                        .arg(backend.subtitleStatus(), backend.subtitleSelection())
+                        .arg(backend.subtitleTranslationActive()).toStdString());
+                }
+                QDirIterator outputs(QDir(profile).absoluteFilePath(QStringLiteral("subtitle-session")),
+                    {QStringLiteral("*.ass")}, QDir::Files, QDirIterator::Subdirectories);
+                bool translated = false;
+                while (outputs.hasNext())
+                {
+                    QFile output(outputs.next());
+                    require(output.open(QIODevice::ReadOnly), "Read generated embedded subtitle failed");
+                    const auto content = output.readAll();
+                    translated |= content.contains("Style: Default,Arial,20")
+                        && content.contains("{\\an8}{\\pos(160,35)}Cached embedded translation");
+                }
+                require(translated, "Embedded translation lost accepted text or ASS style");
+                auto translatedFrame = target.toImage();
+                auto translatedCaption = translatedFrame.copy(captionArea);
+                QElapsedTimer pixelWait;
+                pixelWait.start();
+                while ((brightPixels(translatedCaption) < 50 || translatedCaption == original)
+                    && pixelWait.elapsed() < 5000)
+                {
+                    tick();
+                    translatedFrame = target.toImage();
+                    translatedCaption = translatedFrame.copy(captionArea);
+                }
+                require(brightPixels(translatedCaption) >= 50,
+                    "Translated embedded caption was not rendered");
+                require(translatedCaption != original, "Embedded translation did not change GPU pixels");
+                require(translatedFrame.save(evidencePrefix + QStringLiteral(".embedded-subtitle.png")),
+                    "Save embedded subtitle frame failed");
+                backend.changeSubtitleTranslation(false);
+                wait([&] { return selectedSubtitle(backend.subtitleTracks()) == subtitleId; },
+                    "Original embedded track was not restored");
+                require(QThreadPool::globalInstance()->waitForDone(2000),
+                    "Embedded subtitle reader did not drain");
+                const auto children = childProcessCount();
+                require(children == 0, "Remote embedded translation spawned a child runtime");
+                evidence = {
+                    {QStringLiteral("remoteEmbeddedTranslation"), true},
+                    {QStringLiteral("selectedSubtitle"), subtitleId},
+                    {QStringLiteral("cacheStyleOriginal"), translated},
+                    {QStringLiteral("gpuPixelsChanged"), translatedCaption != original},
+                    {QStringLiteral("ownedChildren"), children},
+                };
+                evidence[QStringLiteral("exitCode")] = 0;
+                QFile output(evidencePrefix + QStringLiteral(".json"));
+                require(output.open(QIODevice::WriteOnly), "Write embedded evidence failed");
+                output.write(QJsonDocument(evidence).toJson());
+                return 0;
+            }
             require(std::abs(backend.appliedAudioDelay() - 0.15) < 0.001,
                 "Saved global audio delay was not applied to libmpv");
             backend.changeMute(true);

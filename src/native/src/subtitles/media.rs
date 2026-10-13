@@ -10,6 +10,7 @@ use sha2::{Digest, Sha256};
 use tokio::sync::{OnceCell, watch};
 
 use super::network::{http_url, read_network_external, scoped_headers};
+use super::range::{MediaReader, probe_range, strong_etag};
 use super::source::{digest_local_media, local_path, read_local_external};
 use super::{SubtitleDocument, SubtitleFormat, SubtitleSourceError};
 
@@ -96,6 +97,30 @@ impl PlaybackMedia {
             read_local_external(Path::new(source), format).await
         }
     }
+
+    pub(super) async fn reader(
+        &self,
+        expected_digest: &str,
+        cancelled: watch::Receiver<bool>,
+    ) -> Result<MediaReader, SubtitleSourceError> {
+        let range = probe_range(
+            &self.source,
+            &self.headers,
+            self.http_proxy.as_deref(),
+            cancelled.clone(),
+        )
+        .await?;
+        if torrent_range_url(&self.source).is_some() {
+            let mut digest = Sha256::new();
+            digest.update(b"qbutt-immutable-range-v1\0");
+            digest.update(range.etag.as_bytes());
+            digest.update(range.length.to_be_bytes());
+            if format!("{:x}", digest.finalize()) != expected_digest {
+                return Err(SubtitleSourceError::Source);
+            }
+        }
+        Ok(MediaReader::new(range, cancelled))
+    }
 }
 
 /// Only qbutt's private verified torrent endpoint has an immutable ETag contract.
@@ -146,14 +171,7 @@ async fn range_identity(
             .parse::<u64>()
             .ok()?;
         let etag = response.headers().get(ETAG)?.as_bytes();
-        if length == 0
-            || etag.len() < 2
-            || etag.first() != Some(&b'"')
-            || etag.last() != Some(&b'"')
-            || etag[1..etag.len() - 1]
-                .iter()
-                .any(|byte| !matches!(*byte, 0x21 | 0x23..=0x7e | 0x80..=0xff))
-        {
+        if length == 0 || !strong_etag(etag) {
             return None;
         }
         let mut digest = Sha256::new();

@@ -379,12 +379,7 @@ pub fn probe_network_timing(
     if !ffprobe.is_file() {
         return Err("Bundled FFprobe is required for network timing analysis.".into());
     }
-    if source.cookies_in_use
-        || source
-            .headers
-            .iter()
-            .any(|header| header.to_ascii_lowercase().starts_with("cookie:"))
-    {
+    if source.cookies_in_use || !source.headers.is_empty() {
         return Err("The protected stream cannot be probed outside playback.".into());
     }
     let url = probe_url(source.url)?;

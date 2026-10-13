@@ -2,14 +2,17 @@
 
 mod cache;
 mod document;
+mod matroska;
 mod media;
 mod network;
+mod range;
 mod service;
 mod source;
 mod translation;
 
 pub use cache::{SubtitleCache, SubtitleCacheKey, SubtitleIdentity};
 pub use document::{SubtitleDocument, SubtitleError, SubtitleFormat, SubtitleFragment};
+pub use matroska::extract_indexed_matroska;
 pub use media::PlaybackMedia;
 pub use service::{SubtitleService, SubtitleServiceError};
 pub use source::{
