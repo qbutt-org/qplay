@@ -88,8 +88,9 @@ pub fn run_start_task(task: Box<StartTask>) {
                         .as_mut()
                         .dispatch(&["set", "audio-delay", &delay.to_string()]);
                 }
-                player.as_mut().drain_events();
+                // Load a startup request before IPC events record externally loaded media.
                 player.as_mut().load_pending_media();
+                player.as_mut().drain_events();
                 player.as_mut().state_changed();
             }
             Err(error) => {
