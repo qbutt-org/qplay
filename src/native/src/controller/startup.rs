@@ -155,7 +155,13 @@ pub fn run_start_task(task: Box<StartTask>) {
         }
     });
     if can_update {
-        let _ = tools.update_if_due(&task.cancel, |_, _| {});
+        if let Ok(Some(updated)) = tools.update_if_due(&task.cancel, |_, _| {}) {
+            let _ = thread.queue(move |mut player| {
+                if player.generation == generation {
+                    player.as_mut().set_online_path(&updated.path);
+                }
+            });
+        }
     }
     let _ = thread.queue(move |mut player| {
         if player.generation == generation {
