@@ -27,6 +27,14 @@ void Qplay::startUpdateTask(::rust::Box<UpdateTask> task)
     });
 }
 
+void Qplay::startSubtitleTask(::rust::Box<SubtitleTask> task)
+{
+    QThreadPool::globalInstance()->start([task = std::move(task)]() mutable
+    {
+        run_subtitle_task(std::move(task));
+    });
+}
+
 std::unique_ptr<Qplay::TrackModel> Qplay::createTrackModel()
 {
     return std::make_unique<TrackModel>();

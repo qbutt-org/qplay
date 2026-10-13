@@ -75,6 +75,14 @@ pub struct Track {
     pub codec: String,
     #[serde(default)]
     pub selected: bool,
+    #[serde(default, rename = "ff-index")]
+    pub ff_index: Option<i64>,
+    #[serde(default, rename = "src-id")]
+    pub src_id: Option<i64>,
+    #[serde(default)]
+    pub external: bool,
+    #[serde(default, rename = "external-filename")]
+    pub external_filename: Option<String>,
 }
 
 impl Track {

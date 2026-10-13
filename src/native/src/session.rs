@@ -148,6 +148,7 @@ impl Session {
             ("pause", mpv::FORMAT_FLAG),
             ("mute", mpv::FORMAT_FLAG),
             ("track-list", mpv::FORMAT_STRING),
+            ("current-demuxer", mpv::FORMAT_STRING),
             ("options/aid", mpv::FORMAT_STRING),
             ("options/sid", mpv::FORMAT_STRING),
             ("sub-text", mpv::FORMAT_STRING),

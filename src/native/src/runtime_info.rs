@@ -70,7 +70,7 @@ pub fn runtime_info_json(library: &str, data: &str, config: &str) -> Result<Stri
     Ok(metadata.to_string())
 }
 
-fn verify_bundle(bundle: &Path) -> Result<(), String> {
+pub(crate) fn verify_bundle(bundle: &Path) -> Result<(), String> {
     let bytes = fs::read(bundle.join("build-manifest.json"))
         .map_err(|error| format!("Read qplay build manifest: {error}"))?;
     let manifest: BuildManifest = serde_json::from_slice(&bytes)
@@ -137,7 +137,7 @@ fn verify_bundle(bundle: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn tool(engine: &Path, name: &str) -> Result<PathBuf, String> {
+pub(crate) fn tool(engine: &Path, name: &str) -> Result<PathBuf, String> {
     let path = engine.join(name);
     let metadata =
         fs::symlink_metadata(&path).map_err(|error| format!("Read bundled {name}: {error}"))?;

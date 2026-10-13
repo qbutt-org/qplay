@@ -21,6 +21,14 @@ impl ffi::PlayerController {
             match event {
                 Event::Property(name, value) => self.as_mut().apply_property(&name, value),
                 Event::StartFile => {
+                    self.as_mut().cancel_subtitle_job();
+                    let mut state = self.as_mut().rust_mut();
+                    state.subtitle_original_id = None;
+                    state.subtitle_output_id = None;
+                    state.subtitle_output_path = None;
+                    state.subtitle_demuxer.clear();
+                    state.subtitle_translation_view = state.subtitle_translation.enabled;
+                    state.subtitle_status = "idle".into();
                     self.as_mut().rust_mut().file_loaded = false;
                     self.as_mut().rust_mut().subtitle_text.clear();
                     self.as_mut().dispatch(&["set", "sub-pos", "100"]);
@@ -37,8 +45,10 @@ impl ffi::PlayerController {
                     state.error_text = QString::default();
                     state.state = ffi::State::Loading;
                     self.as_mut().begin_gpu_probe();
+                    self.as_mut().maybe_start_subtitle_window();
                 }
                 Event::EndFile(error) => {
+                    self.as_mut().cancel_subtitle_job();
                     self.as_mut().rust_mut().file_loaded = false;
                     self.as_mut().rust_mut().subtitle_text.clear();
                     if error < 0
@@ -50,6 +60,15 @@ impl ffi::PlayerController {
                     }
                 }
                 Event::Command(id, error) => {
+                    if let Some(generation) = self.as_mut().rust_mut().subtitle_commands.remove(&id)
+                    {
+                        if error < 0 && generation == self.subtitle_task_generation {
+                            let mut state = self.as_mut().rust_mut();
+                            state.subtitle_status = "failed".into();
+                            state.subtitle_translation_view = false;
+                        }
+                        continue;
+                    }
                     if self.online_command == Some(id) {
                         self.as_mut().rust_mut().online_command = None;
                         if error < 0 {
@@ -78,6 +97,7 @@ impl ffi::PlayerController {
                     }
                 }
                 Event::Shutdown => {
+                    self.as_mut().cancel_subtitle_job();
                     let mut state = self.as_mut().rust_mut();
                     state.engine_ready = false;
                     state.file_loaded = false;
@@ -114,6 +134,7 @@ impl ffi::PlayerController {
             ("time-pos", PropertyValue::Number(position)) => {
                 self.as_mut().rust_mut().position = position;
                 self.as_mut().tick_gpu_quality();
+                self.as_mut().maybe_start_subtitle_window();
             }
             ("time-pos", PropertyValue::Unavailable) => self.as_mut().rust_mut().position = 0.0,
             ("duration", PropertyValue::Number(duration)) => {
@@ -148,6 +169,10 @@ impl ffi::PlayerController {
                 self.as_mut().rust_mut().paused = paused;
             }
             ("path", PropertyValue::Text(path)) => self.as_mut().rust_mut().observed_path = path,
+            ("current-demuxer", PropertyValue::Text(demuxer)) => {
+                self.as_mut().rust_mut().subtitle_demuxer = demuxer;
+                self.as_mut().maybe_start_subtitle_window();
+            }
             ("media-title", PropertyValue::Text(title)) => {
                 self.as_mut().rust_mut().title = QString::from(title)
             }
@@ -169,14 +194,48 @@ impl ffi::PlayerController {
                 let signature = super::gpu::video_signature(&json);
                 match serde_json::from_str::<Vec<Track>>(&json) {
                     Ok(tracks) => {
+                        let output = self.subtitle_output_path.as_ref();
+                        let service = self.subtitle_service.as_ref();
+                        let generated = |track: &Track| {
+                            track.external_filename.as_deref().is_some_and(|name| {
+                                let path = std::path::Path::new(name);
+                                service.is_some_and(|service| service.owns_output_path(path))
+                            })
+                        };
+                        let output_id = tracks
+                            .iter()
+                            .find(|track| {
+                                track.kind == "sub"
+                                    && output.is_some_and(|path| {
+                                        track.external_filename.as_deref().map(std::path::Path::new)
+                                            == Some(path.as_path())
+                                    })
+                            })
+                            .map(|track| track.id);
+                        let original_id = tracks
+                            .iter()
+                            .find(|track| {
+                                track.kind == "sub" && track.selected && !generated(track)
+                            })
+                            .map(|track| track.id);
+                        let previous_original = self.subtitle_original_id.filter(|id| {
+                            tracks.iter().any(|track| {
+                                track.kind == "sub" && track.id == *id && !generated(track)
+                            })
+                        });
                         let (audio, subtitles): (Vec<Track>, Vec<Track>) = tracks
                             .into_iter()
-                            .filter(|track| track.kind == "audio" || track.kind == "sub")
+                            .filter(|track| {
+                                (track.kind == "audio" || track.kind == "sub") && !generated(track)
+                            })
                             .partition(|track| track.kind == "audio");
                         let mut state = self.as_mut().rust_mut();
+                        state.subtitle_output_id = output_id;
+                        state.subtitle_original_id = original_id.or(previous_original);
                         state.audio_tracks.pin_mut().update(audio);
                         state.subtitle_tracks.pin_mut().update(subtitles);
                         self.as_mut().apply_selected_subtitle_position();
+                        self.as_mut().maybe_start_subtitle_window();
                     }
                     Err(error) => self.as_mut().fail(format!("Read media tracks: {error}")),
                 }

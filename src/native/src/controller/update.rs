@@ -116,19 +116,6 @@ impl ffi::PlayerController {
         self.portable
     }
 
-    pub(super) fn configure_updates(
-        mut self: Pin<&mut Self>,
-        data: &QString,
-        install: &QString,
-        portable: bool,
-    ) {
-        let mut state = self.as_mut().rust_mut();
-        state.update_data = Some(PathBuf::from(data.to_string()));
-        state.install_directory = Some(PathBuf::from(install.to_string()));
-        state.portable = portable;
-        self.as_mut().state_changed();
-    }
-
     pub(super) fn check_updates(mut self: Pin<&mut Self>) {
         if matches!(
             self.update_state.to_string().as_str(),

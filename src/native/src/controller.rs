@@ -12,6 +12,7 @@ use crate::app_update;
 use crate::launch::LaunchOptions;
 use crate::preferences::DEFAULT_SUBTITLE_POSITION;
 use crate::preferences::Preferences;
+use crate::preferences::SubtitleTranslationPreferences;
 use crate::session::{RenderLease, RetiredSession, Session};
 use crate::track_model;
 use crate::yt_dlp;
@@ -20,9 +21,11 @@ mod actions;
 mod events;
 mod gpu;
 mod startup;
+mod subtitles;
 mod update;
 
 pub use startup::{FrameWakeup, StartTask, Wakeup, frame_wakeup, run_start_task, wakeup};
+pub use subtitles::{SubtitleTask, run_subtitle_task};
 pub use update::{UpdateTask, run_update_task};
 
 #[cxx_qt::bridge(namespace = "Qplay")]
@@ -68,6 +71,8 @@ pub mod ffi {
         fn retireSession(session: Box<RetiredSession>);
         #[rust_name = "start_update_task"]
         fn startUpdateTask(task: Box<UpdateTask>);
+        #[rust_name = "start_subtitle_task"]
+        fn startSubtitleTask(task: Box<SubtitleTask>);
     }
 
     extern "Rust" {
@@ -78,6 +83,8 @@ pub mod ffi {
         fn run_start_task(task: Box<StartTask>);
         type UpdateTask;
         fn run_update_task(task: Box<UpdateTask>);
+        type SubtitleTask;
+        fn run_subtitle_task(task: Box<SubtitleTask>);
         type RenderLease;
         fn acquire_render_lease(player: &PlayerController) -> Result<Box<RenderLease>>;
         fn render_generation(self: &RenderLease) -> u64;
@@ -109,6 +116,14 @@ pub mod ffi {
         #[qproperty(QString, title, READ = title, NOTIFY = state_changed)]
         #[qproperty(QString, audio_selection, cxx_name = "audioSelection", READ = audio_selection, NOTIFY = state_changed)]
         #[qproperty(QString, subtitle_selection, cxx_name = "subtitleSelection", READ = subtitle_selection, NOTIFY = state_changed)]
+        #[qproperty(bool, subtitle_translation_enabled, cxx_name = "subtitleTranslationEnabled", READ = subtitle_translation_enabled, NOTIFY = state_changed)]
+        #[qproperty(bool, subtitle_translation_active, cxx_name = "subtitleTranslationActive", READ = subtitle_translation_active, NOTIFY = state_changed)]
+        #[qproperty(QString, subtitle_target, cxx_name = "subtitleTarget", READ = subtitle_target, NOTIFY = state_changed)]
+        #[qproperty(QString, subtitle_model, cxx_name = "subtitleModel", READ = subtitle_model, NOTIFY = state_changed)]
+        #[qproperty(QString, subtitle_effort, cxx_name = "subtitleEffort", READ = subtitle_effort, NOTIFY = state_changed)]
+        #[qproperty(QStringList, subtitle_models, cxx_name = "subtitleModels", READ = subtitle_models, NOTIFY = state_changed)]
+        #[qproperty(QStringList, subtitle_efforts, cxx_name = "subtitleEfforts", READ = subtitle_efforts, NOTIFY = state_changed)]
+        #[qproperty(QString, subtitle_status, cxx_name = "subtitleStatus", READ = subtitle_status, NOTIFY = state_changed)]
         #[qproperty(QString, language, READ = language, NOTIFY = state_changed)]
         #[qproperty(QString, appearance, READ = appearance, NOTIFY = state_changed)]
         #[qproperty(QString, settings_error, cxx_name = "settingsError", READ = settings_error, NOTIFY = state_changed)]
@@ -161,6 +176,22 @@ pub mod ffi {
         fn audio_selection(&self) -> QString;
         #[cxx_name = "subtitleSelection"]
         fn subtitle_selection(&self) -> QString;
+        #[cxx_name = "subtitleTranslationEnabled"]
+        fn subtitle_translation_enabled(&self) -> bool;
+        #[cxx_name = "subtitleTranslationActive"]
+        fn subtitle_translation_active(&self) -> bool;
+        #[cxx_name = "subtitleTarget"]
+        fn subtitle_target(&self) -> QString;
+        #[cxx_name = "subtitleModel"]
+        fn subtitle_model(&self) -> QString;
+        #[cxx_name = "subtitleEffort"]
+        fn subtitle_effort(&self) -> QString;
+        #[cxx_name = "subtitleModels"]
+        fn subtitle_models(&self) -> QStringList;
+        #[cxx_name = "subtitleEfforts"]
+        fn subtitle_efforts(&self) -> QStringList;
+        #[cxx_name = "subtitleStatus"]
+        fn subtitle_status(&self) -> QString;
         fn language(&self) -> QString;
         fn appearance(&self) -> QString;
         #[cxx_name = "settingsError"]
@@ -202,8 +233,8 @@ pub mod ffi {
         fn configure(self: Pin<&mut Self>, path: &QString, system_language: &QString);
         #[cxx_name = "configureLaunch"]
         fn configure_launch(self: Pin<&mut Self>, arguments: &QStringList) -> QString;
-        #[cxx_name = "configureUpdates"]
-        fn configure_updates(
+        #[cxx_name = "configureInstallation"]
+        fn configure_installation(
             self: Pin<&mut Self>,
             data: &QString,
             install: &QString,
@@ -280,6 +311,24 @@ pub mod ffi {
         #[rust_name = "disable_subtitles"]
         fn disableSubtitles(self: Pin<&mut Self>);
         #[qinvokable]
+        #[rust_name = "change_subtitle_translation"]
+        fn changeSubtitleTranslation(self: Pin<&mut Self>, enabled: bool);
+        #[qinvokable]
+        #[rust_name = "change_subtitle_target"]
+        fn changeSubtitleTarget(self: Pin<&mut Self>, target: &QString);
+        #[qinvokable]
+        #[rust_name = "change_subtitle_model"]
+        fn changeSubtitleModel(self: Pin<&mut Self>, model: &QString);
+        #[qinvokable]
+        #[rust_name = "change_subtitle_effort"]
+        fn changeSubtitleEffort(self: Pin<&mut Self>, effort: &QString);
+        #[qinvokable]
+        #[rust_name = "use_translated_subtitles"]
+        fn useTranslatedSubtitles(self: Pin<&mut Self>);
+        #[qinvokable]
+        #[rust_name = "load_subtitle_models"]
+        fn loadSubtitleModels(self: Pin<&mut Self>);
+        #[qinvokable]
         #[rust_name = "add_subtitle"]
         fn addSubtitle(self: Pin<&mut Self>, path: &QString);
         #[qinvokable]
@@ -321,6 +370,7 @@ pub struct PlayerControllerRust {
     media: Option<String>,
     observed_path: String,
     pending_commands: HashSet<u64>,
+    subtitle_commands: HashMap<u64, u64>,
     gpu_commands: HashMap<u64, gpu::GpuCommand>,
     gpu: gpu::GpuState,
     audio_tracks: UniquePtr<track_model::ffi::TrackModel>,
@@ -344,6 +394,22 @@ pub struct PlayerControllerRust {
     language: QString,
     appearance: QString,
     settings_path: Option<PathBuf>,
+    subtitle_translation: SubtitleTranslationPreferences,
+    subtitle_translation_view: bool,
+    subtitle_status: QString,
+    subtitle_catalog: Vec<qbutt_codex::CodexModel>,
+    subtitle_catalog_requested: bool,
+    subtitle_catalog_cancel: Option<tokio::sync::watch::Sender<bool>>,
+    subtitle_service: Option<Arc<crate::subtitles::SubtitleService>>,
+    subtitle_task_cancel: Option<tokio::sync::watch::Sender<bool>>,
+    subtitle_task_generation: u64,
+    subtitle_original_id: Option<i64>,
+    subtitle_output_id: Option<i64>,
+    subtitle_output_path: Option<PathBuf>,
+    subtitle_output_plain: bool,
+    subtitle_library: Option<PathBuf>,
+    subtitle_demuxer: String,
+    subtitle_window_start_ms: Option<i64>,
     settings_error: QString,
     error_text: QString,
     audio_output: QString,
@@ -374,6 +440,7 @@ impl Default for PlayerControllerRust {
             media: None,
             observed_path: String::new(),
             pending_commands: HashSet::new(),
+            subtitle_commands: HashMap::new(),
             gpu_commands: HashMap::new(),
             gpu: gpu::GpuState::default(),
             audio_tracks: track_model::ffi::create_track_model(),
@@ -397,6 +464,22 @@ impl Default for PlayerControllerRust {
             language: QString::from("en"),
             appearance: QString::from("system"),
             settings_path: None,
+            subtitle_translation: SubtitleTranslationPreferences::default(),
+            subtitle_translation_view: false,
+            subtitle_status: QString::from("idle"),
+            subtitle_catalog: Vec::new(),
+            subtitle_catalog_requested: false,
+            subtitle_catalog_cancel: None,
+            subtitle_service: None,
+            subtitle_task_cancel: None,
+            subtitle_task_generation: 0,
+            subtitle_original_id: None,
+            subtitle_output_id: None,
+            subtitle_output_path: None,
+            subtitle_output_plain: false,
+            subtitle_library: None,
+            subtitle_demuxer: String::new(),
+            subtitle_window_start_ms: None,
             settings_error: QString::default(),
             error_text: QString::default(),
             audio_output: QString::default(),
@@ -424,11 +507,20 @@ impl Drop for PlayerControllerRust {
         if let Some(cancel) = &self.update_cancel {
             cancel.store(true, Ordering::Release);
         }
+        if let Some(cancel) = &self.subtitle_task_cancel {
+            let _ = cancel.send(true);
+        }
+        if let Some(cancel) = &self.subtitle_catalog_cancel {
+            let _ = cancel.send(true);
+        }
     }
 }
 
 impl PlayerControllerRust {
     fn supports_subtitle_position(&self) -> bool {
+        if self.subtitle_translation_view && self.subtitle_output_id.is_some() {
+            return self.subtitle_output_plain;
+        }
         self.subtitle_tracks.rows.iter().any(|track| {
             track.selected
                 && matches!(
@@ -613,6 +705,7 @@ impl ffi::PlayerController {
                 state.appearance = QString::from(settings.appearance);
                 state.audio_delay = settings.audio_delay;
                 state.subtitle_position = settings.subtitle_position;
+                state.subtitle_translation = settings.subtitle_translation;
                 state.gpu.shader_choice =
                     crate::gpu::shaders::ShaderChoice::from_id(&settings.shader).unwrap();
                 state.gpu.content_choice =
@@ -701,6 +794,7 @@ impl ffi::PlayerController {
                 appearance: self.appearance.to_string(),
                 audio_delay: self.audio_delay,
                 subtitle_position: self.subtitle_position,
+                subtitle_translation: self.subtitle_translation.clone(),
                 shader: self.gpu.shader_choice.id().into(),
                 content: self.gpu.content_choice.id().into(),
                 framegen: self.gpu.framegen_choice.id().into(),

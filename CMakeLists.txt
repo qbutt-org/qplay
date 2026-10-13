@@ -54,6 +54,8 @@ qt_add_qml_module(qplay_views
         assets/icons/rewind-backward-10.svg
         assets/icons/rewind-forward-10.svg
         assets/icons/check.svg
+        assets/icons/chevron-down-dark.svg
+        assets/icons/chevron-down.svg
         assets/icons/chevron-left.svg
         assets/icons/chevron-right.svg
         assets/icons/folder-open.svg

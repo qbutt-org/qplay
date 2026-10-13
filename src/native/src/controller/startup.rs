@@ -209,6 +209,23 @@ pub unsafe extern "C" fn frame_wakeup(data: *mut c_void) {
 }
 
 impl ffi::PlayerController {
+    pub(super) fn configure_installation(
+        mut self: Pin<&mut Self>,
+        data: &QString,
+        install: &QString,
+        portable: bool,
+    ) {
+        let mut state = self.as_mut().rust_mut();
+        state.update_data = Some(PathBuf::from(data.to_string()));
+        match crate::subtitles::SubtitleService::new(&PathBuf::from(data.to_string())) {
+            Ok(service) => state.subtitle_service = Some(Arc::new(service)),
+            Err(_) => state.subtitle_status = "unavailable".into(),
+        }
+        state.install_directory = Some(PathBuf::from(install.to_string()));
+        state.portable = portable;
+        self.as_mut().state_changed();
+    }
+
     fn set_online_path(mut self: Pin<&mut Self>, path: &std::path::Path) {
         let Some(session) = self.session.clone() else {
             return;
@@ -253,6 +270,7 @@ impl ffi::PlayerController {
         state.gpu.interlaced_seen = false;
         state.gpu.video_signature = None;
         let library_path = PathBuf::from(library.to_string());
+        state.subtitle_library = Some(library_path.clone());
         state.gpu.engine_root = library_path.parent().map(PathBuf::from);
         state.gpu.runtime_root = std::env::var_os("QPLAY_MEDIA_RUNTIME").map(PathBuf::from);
         state.state = ffi::State::Starting;

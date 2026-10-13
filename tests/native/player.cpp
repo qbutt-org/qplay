@@ -42,7 +42,7 @@ void require(bool condition, const char *message)
         throw std::runtime_error(message);
 }
 
-int childProcessCount()
+int childProcessCount(bool report = true)
 {
     const auto snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     require(snapshot != INVALID_HANDLE_VALUE, "Process snapshot failed");
@@ -55,7 +55,8 @@ int childProcessCount()
             if (process.th32ParentProcessID == GetCurrentProcessId())
             {
                 ++count;
-                std::fwprintf(stderr, L"Owned child: %lu %s\n", process.th32ProcessID, process.szExeFile);
+                if (report)
+                    std::fwprintf(stderr, L"Owned child: %lu %s\n", process.th32ProcessID, process.szExeFile);
             }
         }
         while (Process32NextW(snapshot, &process));
@@ -130,6 +131,7 @@ int main(int argc, char *argv[])
         qputenv("QPLAY_MEDIA_RUNTIME", QDir(profile).absoluteFilePath(QStringLiteral("framegen")).toUtf8());
     QJsonObject evidence;
     int exitCode = 0;
+    bool pendingCatalogCancellation = false;
 
     try
     {
@@ -140,11 +142,34 @@ int main(int argc, char *argv[])
         surface.create();
         require(gl.makeCurrent(&surface), "Make OpenGL context current failed");
 
+        if (qEnvironmentVariableIsSet("QPLAY_CODEX_CATALOG_QA"))
+        {
+            {
+                Qplay::PlayerController temporary;
+                temporary.loadSubtitleModels();
+                QElapsedTimer catalogStart;
+                catalogStart.start();
+                while (childProcessCount(false) == 0 && catalogStart.elapsed() < 5000)
+                {
+                    app.processEvents();
+                    QThread::msleep(10);
+                }
+                require(childProcessCount(false) > 0,
+                    "A pending Codex model catalog was not observed");
+            }
+            require(QThreadPool::globalInstance()->waitForDone(15000),
+                "Abandoned Codex model catalog did not stop");
+            require(childProcessCount(false) == 0,
+                "Closing during model discovery left a child runtime");
+            pendingCatalogCancellation = true;
+        }
+
         {
             Qplay::PlayerController backend;
             backend.setDisplayRate(60);
             const QString preferences = QDir(profile).absoluteFilePath(QStringLiteral("config/preferences.json"));
             backend.configure(preferences, QStringLiteral("en_US"));
+            backend.configureInstallation(profile, profile, true);
             backend.changeLanguage(QStringLiteral("ru"));
             backend.changeAppearance(QStringLiteral("light"));
             backend.changeAudioDelay(0.15);
@@ -418,14 +443,101 @@ int main(int argc, char *argv[])
             require(QMetaObject::invokeMethod(settingsPanel.get(), "open"), "Open advanced settings failed");
             wait([&] { return settingsPanel->property("opened").toBool(); },
                 "Advanced settings did not open");
+            wait([&] { return !backend.subtitleModels().isEmpty()
+                || backend.subtitleStatus() == QStringLiteral("unavailable"); },
+                "Subtitle model catalog did not finish");
+            auto *settingsContent = qvariant_cast<QQuickItem *>(settingsPanel->property("contentItem"));
+            require(settingsContent != nullptr, "Advanced settings content unavailable");
+            auto *translationSwitch = findVisualItem(settingsContent, QStringLiteral("subtitleTranslationSwitch"));
+            auto *targetEnglish = findVisualItem(settingsContent, QStringLiteral("subtitleTargeten"));
+            auto *targetRussian = findVisualItem(settingsContent, QStringLiteral("subtitleTargetru"));
+            require(translationSwitch != nullptr && targetEnglish != nullptr && targetRussian != nullptr,
+                "Subtitle translation controls unavailable");
+            click(window, *targetEnglish);
+            wait([&] { return backend.subtitleTarget() == QStringLiteral("en"); },
+                "English subtitle target did not reach the controller");
+            click(window, *targetRussian);
+            wait([&] { return backend.subtitleTarget() == QStringLiteral("ru"); },
+                "Russian subtitle target did not reach the controller");
             tick();
             require(target.toImage().save(evidencePrefix + QStringLiteral(".settings-light.png")),
                 "Save light advanced settings failed");
+            auto *settingsScroll = findVisualItem(settingsContent, QStringLiteral("settingsScroll"));
+            require(settingsScroll != nullptr, "Scrollable subtitle settings unavailable");
+            auto *settingsFlickable = qvariant_cast<QQuickItem *>(settingsScroll->property("contentItem"));
+            require(settingsFlickable != nullptr && settingsFlickable->property("contentY").isValid(),
+                "Settings content is not scrollable");
+            const auto scrollLimit = settingsFlickable->property("contentHeight").toDouble()
+                - settingsFlickable->height();
+            require(scrollLimit > 0 && settingsFlickable->setProperty("contentY", scrollLimit),
+                "Settings did not expose its lower categories");
+            tick();
+            require(target.toImage().save(evidencePrefix + QStringLiteral(".settings-720-bottom.png")),
+                "Save scrolled subtitle settings failed");
+            auto *modelChoice = findVisualItem(settingsContent, QStringLiteral("subtitleModel"));
+            auto *effortChoice = findVisualItem(settingsContent, QStringLiteral("subtitleEffort"));
+            require(modelChoice != nullptr && effortChoice != nullptr
+                && modelChoice->isEnabled() && effortChoice->isEnabled(),
+                "Model and effort selectors did not load");
+            click(window, *modelChoice);
+            auto *modelPopup = qvariant_cast<QObject *>(modelChoice->property("popup"));
+            wait([&] { return modelPopup != nullptr && modelPopup->property("opened").toBool(); },
+                "Model selector did not open from pointer input");
+            tick();
+            require(target.toImage().save(evidencePrefix + QStringLiteral(".settings-models.png")),
+                "Save model choices failed");
+            auto *modelOptions = qvariant_cast<QQuickItem *>(modelPopup->property("contentItem"));
+            require(modelOptions != nullptr
+                && modelOptions->mapToScene(QPointF(0, 0)).y() >= 0
+                && modelOptions->mapToScene(QPointF(0, modelOptions->height())).y() <= root->height(),
+                "Model selector extends outside the player");
+            auto *firstModel = findVisualItem(modelOptions, QStringLiteral("subtitleModelOption1"));
+            require(firstModel != nullptr, "First model choice unavailable");
+            click(window, *firstModel);
+            wait([&] { return backend.subtitleModel() == backend.subtitleModels().first(); },
+                "Model choice did not reach the controller");
+            require(!modelPopup->property("opened").toBool(), "Model selector did not close after selection");
+            click(window, *effortChoice);
+            auto *effortPopup = qvariant_cast<QObject *>(effortChoice->property("popup"));
+            wait([&] { return effortPopup != nullptr && effortPopup->property("opened").toBool(); },
+                "Effort selector did not open from pointer input");
+            auto *effortOptions = qvariant_cast<QQuickItem *>(effortPopup->property("contentItem"));
+            require(effortOptions != nullptr
+                && effortOptions->mapToScene(QPointF(0, 0)).y() >= 0
+                && effortOptions->mapToScene(QPointF(0, effortOptions->height())).y() <= root->height(),
+                "Effort selector extends outside the player");
+            auto *firstEffort = findVisualItem(effortOptions, QStringLiteral("subtitleEffortOption1"));
+            require(firstEffort != nullptr, "First effort choice unavailable");
+            click(window, *firstEffort);
+            wait([&] { return backend.subtitleEffort() == backend.subtitleEfforts().first(); },
+                "Effort choice did not reach the controller");
+            require(!effortPopup->property("opened").toBool(), "Effort selector did not close after selection");
+            require(settingsFlickable->setProperty("contentY", 0.0), "Reset settings scroll failed");
+            QOpenGLFramebufferObject largeTarget(QSize(1440, 900), QOpenGLFramebufferObject::CombinedDepthStencil);
+            window.setGeometry(0, 0, 1440, 900);
+            root->setSize(QSizeF(1440, 900));
+            window.setRenderTarget(QQuickRenderTarget::fromOpenGLTexture(largeTarget.texture(), largeTarget.size()));
+            tick();
+            require(largeTarget.toImage().save(evidencePrefix + QStringLiteral(".settings-1440-light.png")),
+                "Save 1440x900 subtitle settings failed");
+            window.setGeometry(0, 0, 1280, 720);
+            root->setSize(QSizeF(1280, 720));
+            window.setRenderTarget(QQuickRenderTarget::fromOpenGLTexture(target.texture(), target.size()));
             backend.changeAppearance(QStringLiteral("dark"));
             settingsPanel->setProperty("dark", true);
             tick();
             require(target.toImage().save(evidencePrefix + QStringLiteral(".settings-dark.png")),
                 "Save dark advanced settings failed");
+            click(window, *translationSwitch);
+            wait([&] { return backend.subtitleTranslationEnabled(); },
+                "Global subtitle translation switch did not enable the service");
+            tick();
+            click(window, *translationSwitch);
+            wait([&] { return !backend.subtitleTranslationEnabled()
+                && selectedSubtitle(backend.subtitleTracks()) == subtitleId; },
+                "Disabling translation did not restore the original subtitle track");
+            require(QThreadPool::globalInstance()->waitForDone(15000),
+                "Canceled subtitle worker did not stop");
             require(QMetaObject::invokeMethod(settingsPanel.get(), "close"), "Close advanced settings failed");
             backend.togglePause();
             wait([&] { return !backend.paused(); }, "Resume after settings inspection failed");
@@ -456,6 +568,10 @@ int main(int argc, char *argv[])
                 {QStringLiteral("speedPresetApplied"), std::abs(backend.speed() - 2) < 0.001},
                 {QStringLiteral("settingsLightRendered"), true},
                 {QStringLiteral("settingsDarkRendered"), true},
+                {QStringLiteral("subtitleTargetSelection"), true},
+                {QStringLiteral("subtitleToggleCancellation"), true},
+                {QStringLiteral("subtitleModelCount"), backend.subtitleModels().size()},
+                {QStringLiteral("pendingCatalogCancellation"), pendingCatalogCancellation},
                 {QStringLiteral("stopReopen"), true},
                 {QStringLiteral("preferencesPersisted"), true},
                 {QStringLiteral("engineFaults"), true},

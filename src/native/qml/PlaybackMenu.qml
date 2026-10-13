@@ -14,7 +14,18 @@ Popup {
     property bool russian: false
     property int page: 0
     readonly property string iconRoot: "qrc:/qt/qml/Qplay/Views/assets/icons/"
-    readonly property string subtitleChoice: backend.subtitleSelection === "no" ? (russian ? qsTr("Выкл.") : qsTr("Off")) : backend.subtitleSelection === "auto" ? (russian ? qsTr("Авто") : qsTr("Auto")) : (russian ? qsTr("Дорожка %1") : qsTr("Track %1")).arg(backend.subtitleSelection)
+    readonly property string subtitleChoice: {
+        if (backend.subtitleTranslationActive) {
+            if (backend.subtitleTarget === "ru")
+                return russian ? qsTr("Перевод: русский") : qsTr("Translation: Russian")
+            return russian ? qsTr("Перевод: английский") : qsTr("Translation: English")
+        }
+        if (backend.subtitleSelection === "no")
+            return russian ? qsTr("Выкл.") : qsTr("Off")
+        if (backend.subtitleSelection === "auto")
+            return russian ? qsTr("Авто") : qsTr("Auto")
+        return (russian ? qsTr("Дорожка %1") : qsTr("Track %1")).arg(backend.subtitleSelection)
+    }
     readonly property string audioChoice: backend.audioSelection === "auto" ? (russian ? qsTr("Авто") : qsTr("Auto")) : (russian ? qsTr("Дорожка %1") : qsTr("Track %1")).arg(backend.audioSelection)
     readonly property string fxStatus: backend.framegenStatus === "loading" ? (russian ? qsTr("Подготовка") : qsTr("Preparing")) : backend.framegenStatus === "active" ? (russian ? qsTr("Генерация кадров") : qsTr("Frame generation")) : backend.effectiveShader === "off" ? (russian ? qsTr("Выкл.") : qsTr("Off")) : backend.effectiveShader === "fsr" ? "FSR" : "Anime4K"
 
@@ -239,6 +250,57 @@ Popup {
                 visible: root.page === 2
                 Layout.fillWidth: true
                 spacing: 2
+
+                ItemDelegate {
+                    id: translateSubtitles
+                    Layout.fillWidth: true
+                    implicitHeight: 44
+                    enabled: root.backend.mediaLoaded
+                    text: root.backend.subtitleTarget === "ru"
+                          ? (root.russian ? qsTr("Перевести на русский") : qsTr("Translate to Russian"))
+                          : (root.russian ? qsTr("Перевести на английский") : qsTr("Translate to English"))
+                    Accessible.name: text
+                    contentItem: RowLayout {
+                        Label {
+                            Layout.fillWidth: true
+                            text: translateSubtitles.text
+                            color: "#62beff"
+                        }
+                        Image {
+                            visible: root.backend.subtitleTranslationActive
+                            source: root.iconRoot + "check.svg"
+                            sourceSize: Qt.size(20, 20)
+                            Layout.preferredWidth: 20
+                            Layout.preferredHeight: 20
+                        }
+                    }
+                    background: Rectangle {
+                        radius: 7
+                        color: translateSubtitles.hovered ? "#343638" : "transparent"
+                        border.color: translateSubtitles.visualFocus ? "#009df7" : "transparent"
+                        border.width: 2
+                    }
+                    onClicked: root.backend.useTranslatedSubtitles()
+                }
+                Label {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 12
+                    Layout.rightMargin: 12
+                    visible: ["working", "bitmap", "unsupported", "unavailable", "modelUnavailable", "failed"].includes(root.backend.subtitleStatus)
+                    text: {
+                        switch (root.backend.subtitleStatus) {
+                        case "working": return root.russian ? qsTr("Переводим…") : qsTr("Translating…")
+                        case "bitmap": return root.russian ? qsTr("Нужна текстовая дорожка субтитров") : qsTr("Choose a text subtitle track")
+                        case "unsupported": return root.russian ? qsTr("Эту дорожку пока нельзя перевести") : qsTr("This track cannot be translated yet")
+                        case "unavailable": return root.russian ? qsTr("Codex недоступен") : qsTr("Codex is unavailable")
+                        case "modelUnavailable": return root.russian ? qsTr("Выбранная модель недоступна") : qsTr("Selected model is unavailable")
+                        default: return root.russian ? qsTr("Не удалось перевести субтитры") : qsTr("Could not translate subtitles")
+                        }
+                    }
+                    color: root.backend.subtitleStatus === "working" ? "#b9bec4" : "#ff9a9a"
+                    wrapMode: Text.WordWrap
+                    font.pixelSize: 13
+                }
 
                 Repeater {
                     model: [

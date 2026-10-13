@@ -7,5 +7,6 @@ mod mpv;
 mod preferences;
 mod runtime_info;
 mod session;
+pub mod subtitles;
 mod track_model;
 mod yt_dlp;

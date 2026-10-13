@@ -18,15 +18,18 @@ Popup {
     readonly property color textColor: dark ? "#f2f6fb" : "#192433"
     readonly property color mutedColor: dark ? "#c1cedc" : "#35465a"
     readonly property color optionColor: dark ? "#343638" : "#e9eef4"
+    readonly property int topOffset: 76
 
     parent: host
     x: root.host ? root.host.width - width - 22 : 0
-    y: 76
+    y: root.topOffset
     width: root.host ? Math.min(344, root.host.width - 32) : 0
+    height: root.host ? Math.min(settingsBody.implicitHeight + topPadding + bottomPadding, root.host.height - root.topOffset - 20) : 0
     padding: 20
     modal: true
     dim: true
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+    onOpened: root.backend.loadSubtitleModels()
 
     Overlay.modal: Rectangle {
         color: "#59000000"
@@ -37,336 +40,590 @@ Popup {
         border.color: root.dark ? "#80ffffff" : "#dddfe2"
     }
 
-    contentItem: ColumnLayout {
-        spacing: 0
+    contentItem: ScrollView {
+        id: settingsScroll
+        objectName: "settingsScroll"
+        clip: true
+        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
-        RowLayout {
-            Layout.fillWidth: true
+        ColumnLayout {
+            id: settingsBody
+            width: settingsScroll.availableWidth
+            spacing: 0
+
+            RowLayout {
+                Layout.fillWidth: true
+
+                Label {
+                    Layout.fillWidth: true
+                    text: root.russian ? qsTr("Настройки") : qsTr("Settings")
+                    color: root.textColor
+                    font.pixelSize: 19
+                    font.weight: Font.DemiBold
+                }
+                PlayerIconButton {
+                    iconSource: root.dark ? root.iconRoot + "x.svg" : root.iconRoot + "x-dark.svg"
+                    iconSize: 20
+                    hoverColor: root.dark ? "#2cffffff" : "#16000000"
+                    hint: root.russian ? qsTr("Закрыть настройки") : qsTr("Close settings")
+                    onClicked: root.close()
+                }
+            }
 
             Label {
-                Layout.fillWidth: true
-                text: root.russian ? qsTr("Настройки") : qsTr("Settings")
-                color: root.textColor
-                font.pixelSize: 19
+                Layout.topMargin: 17
+                text: root.russian ? qsTr("Оформление") : qsTr("Appearance")
+                color: root.mutedColor
+                font.pixelSize: 14
                 font.weight: Font.DemiBold
             }
-            PlayerIconButton {
-                iconSource: root.dark ? root.iconRoot + "x.svg" : root.iconRoot + "x-dark.svg"
-                iconSize: 20
-                hoverColor: root.dark ? "#2cffffff" : "#16000000"
-                hint: root.russian ? qsTr("Закрыть настройки") : qsTr("Close settings")
-                onClicked: root.close()
-            }
-        }
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.topMargin: 8
+                spacing: 6
 
-        Label {
-            Layout.topMargin: 17
-            text: root.russian ? qsTr("Оформление") : qsTr("Appearance")
-            color: root.mutedColor
-            font.pixelSize: 14
-            font.weight: Font.DemiBold
-        }
-        RowLayout {
-            Layout.fillWidth: true
-            Layout.topMargin: 8
-            spacing: 6
-
-            Repeater {
-                model: [
-                    {
-                        value: "system",
-                        label: root.russian ? qsTr("Система") : qsTr("System")
-                    },
-                    {
-                        value: "light",
-                        label: root.russian ? qsTr("Светлая") : qsTr("Light")
-                    },
-                    {
-                        value: "dark",
-                        label: root.russian ? qsTr("Тёмная") : qsTr("Dark")
+                Repeater {
+                    model: [
+                        {
+                            value: "system",
+                            label: root.russian ? qsTr("Система") : qsTr("System")
+                        },
+                        {
+                            value: "light",
+                            label: root.russian ? qsTr("Светлая") : qsTr("Light")
+                        },
+                        {
+                            value: "dark",
+                            label: root.russian ? qsTr("Тёмная") : qsTr("Dark")
+                        }
+                    ]
+                    delegate: Button {
+                        id: option
+                        required property var modelData
+                        Layout.fillWidth: true
+                        implicitHeight: 44
+                        text: modelData.label
+                        font.pixelSize: 14
+                        checked: root.backend.appearance === modelData.value
+                        contentItem: Label {
+                            text: option.text
+                            color: option.checked ? "#ffffff" : root.textColor
+                            font: option.font
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        background: Rectangle {
+                            radius: 7
+                            color: option.checked ? "#009df7" : root.optionColor
+                            border.color: option.visualFocus ? "#009df7" : "transparent"
+                            border.width: 2
+                        }
+                        onClicked: root.backend.changeAppearance(modelData.value)
                     }
-                ]
-                delegate: Button {
-                    id: option
-                    required property var modelData
-                    Layout.fillWidth: true
+                }
+            }
+
+            Label {
+                Layout.topMargin: 19
+                text: root.russian ? qsTr("Аудио и видео") : qsTr("Audio and video")
+                color: root.mutedColor
+                font.pixelSize: 14
+                font.weight: Font.DemiBold
+            }
+            Label {
+                Layout.topMargin: 9
+                text: root.russian ? qsTr("Задержка звука") : qsTr("Audio delay")
+                color: root.textColor
+                font.pixelSize: 15
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.topMargin: 5
+                spacing: 8
+
+                Button {
+                    id: decreaseDelay
+                    implicitWidth: 44
                     implicitHeight: 44
-                    text: modelData.label
-                    font.pixelSize: 14
-                    checked: root.backend.appearance === modelData.value
-                    contentItem: Label {
-                        text: option.text
-                        color: option.checked ? "#ffffff" : root.textColor
-                        font: option.font
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
+                    Accessible.name: root.russian ? qsTr("Уменьшить задержку звука") : qsTr("Decrease audio delay")
+                    contentItem: Item {
+                        Image {
+                            anchors.centerIn: parent
+                            width: 20
+                            height: 20
+                            source: root.iconRoot + (root.dark ? "minus.svg" : "minus-dark.svg")
+                            sourceSize: Qt.size(20, 20)
+                        }
                     }
                     background: Rectangle {
                         radius: 7
-                        color: option.checked ? "#009df7" : root.optionColor
-                        border.color: option.visualFocus ? "#009df7" : "transparent"
+                        color: decreaseDelay.hovered ? (root.dark ? "#425365" : "#dfe7f0") : root.optionColor
+                        border.color: decreaseDelay.visualFocus ? "#009df7" : "transparent"
                         border.width: 2
                     }
-                    onClicked: root.backend.changeAppearance(modelData.value)
+                    onClicked: root.backend.changeAudioDelay(Math.round((root.backend.audioDelay - 0.05) * 100) / 100)
                 }
-            }
-        }
-
-        Label {
-            Layout.topMargin: 19
-            text: root.russian ? qsTr("Аудио и видео") : qsTr("Audio and video")
-            color: root.mutedColor
-            font.pixelSize: 14
-            font.weight: Font.DemiBold
-        }
-        Label {
-            Layout.topMargin: 9
-            text: root.russian ? qsTr("Задержка звука") : qsTr("Audio delay")
-            color: root.textColor
-            font.pixelSize: 15
-        }
-        RowLayout {
-            Layout.fillWidth: true
-            Layout.topMargin: 5
-            spacing: 8
-
-            Button {
-                id: decreaseDelay
-                implicitWidth: 44
-                implicitHeight: 44
-                Accessible.name: root.russian ? qsTr("Уменьшить задержку звука") : qsTr("Decrease audio delay")
-                contentItem: Item {
-                    Image {
-                        anchors.centerIn: parent
-                        width: 20
-                        height: 20
-                        source: root.iconRoot + (root.dark ? "minus.svg" : "minus-dark.svg")
-                        sourceSize: Qt.size(20, 20)
+                Label {
+                    Layout.fillWidth: true
+                    horizontalAlignment: Text.AlignHCenter
+                    text: (root.backend.audioDelay >= 0 ? "+" : "") + root.backend.audioDelay.toFixed(2) + " s"
+                    color: root.textColor
+                    font.pixelSize: 15
+                    Accessible.name: root.russian ? qsTr("Задержка звука %1 секунды").arg(root.backend.audioDelay.toFixed(2)) : qsTr("Audio delay %1 seconds").arg(root.backend.audioDelay.toFixed(2))
+                }
+                Button {
+                    id: increaseDelay
+                    implicitWidth: 44
+                    implicitHeight: 44
+                    Accessible.name: root.russian ? qsTr("Увеличить задержку звука") : qsTr("Increase audio delay")
+                    contentItem: Item {
+                        Image {
+                            anchors.centerIn: parent
+                            width: 20
+                            height: 20
+                            source: root.iconRoot + (root.dark ? "plus.svg" : "plus-dark.svg")
+                            sourceSize: Qt.size(20, 20)
+                        }
                     }
+                    background: Rectangle {
+                        radius: 7
+                        color: increaseDelay.hovered ? (root.dark ? "#425365" : "#dfe7f0") : root.optionColor
+                        border.color: increaseDelay.visualFocus ? "#009df7" : "transparent"
+                        border.width: 2
+                    }
+                    onClicked: root.backend.changeAudioDelay(Math.round((root.backend.audioDelay + 0.05) * 100) / 100)
                 }
-                background: Rectangle {
-                    radius: 7
-                    color: decreaseDelay.hovered ? (root.dark ? "#425365" : "#dfe7f0") : root.optionColor
-                    border.color: decreaseDelay.visualFocus ? "#009df7" : "transparent"
-                    border.width: 2
+                Button {
+                    id: resetDelay
+                    implicitHeight: 44
+                    text: root.russian ? qsTr("Сброс") : qsTr("Reset")
+                    font.pixelSize: 13
+                    enabled: root.backend.audioDelay !== 0
+                    palette.buttonText: root.textColor
+                    background: Rectangle {
+                        radius: 7
+                        color: resetDelay.hovered ? (root.dark ? "#425365" : "#dfe7f0") : root.optionColor
+                        border.color: resetDelay.visualFocus ? "#009df7" : "transparent"
+                        border.width: 2
+                    }
+                    onClicked: root.backend.changeAudioDelay(0)
                 }
-                onClicked: root.backend.changeAudioDelay(Math.round((root.backend.audioDelay - 0.05) * 100) / 100)
             }
             Label {
                 Layout.fillWidth: true
-                horizontalAlignment: Text.AlignHCenter
-                text: (root.backend.audioDelay >= 0 ? "+" : "") + root.backend.audioDelay.toFixed(2) + " s"
-                color: root.textColor
-                font.pixelSize: 15
-                Accessible.name: root.russian ? qsTr("Задержка звука %1 секунды").arg(root.backend.audioDelay.toFixed(2)) : qsTr("Audio delay %1 seconds").arg(root.backend.audioDelay.toFixed(2))
+                Layout.topMargin: 6
+                text: root.russian ? qsTr("Плюс задерживает звук") : qsTr("Positive delays audio")
+                color: root.mutedColor
+                font.pixelSize: 12
             }
-            Button {
-                id: increaseDelay
-                implicitWidth: 44
+
+            Label {
+                Layout.topMargin: 17
+                text: root.russian ? qsTr("Язык") : qsTr("Language")
+                color: root.mutedColor
+                font.pixelSize: 14
+                font.weight: Font.DemiBold
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.topMargin: 8
+                spacing: 6
+
+                Repeater {
+                    model: [
+                        {
+                            value: "ru",
+                            label: "Русский"
+                        },
+                        {
+                            value: "en",
+                            label: "English"
+                        }
+                    ]
+                    delegate: Button {
+                        id: languageOption
+                        required property var modelData
+                        Layout.fillWidth: true
+                        implicitHeight: 44
+                        text: modelData.label
+                        font.pixelSize: 14
+                        checked: root.backend.language === modelData.value
+                        contentItem: Label {
+                            text: languageOption.text
+                            color: languageOption.checked ? "#ffffff" : root.textColor
+                            font: languageOption.font
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        background: Rectangle {
+                            radius: 7
+                            color: languageOption.checked ? "#009df7" : root.optionColor
+                            border.color: languageOption.visualFocus ? "#009df7" : "transparent"
+                            border.width: 2
+                        }
+                        onClicked: root.backend.changeLanguage(modelData.value)
+                    }
+                }
+            }
+
+            Label {
+                Layout.topMargin: 19
+                text: root.russian ? qsTr("Перевод субтитров") : qsTr("Subtitle translation")
+                color: root.mutedColor
+                font.pixelSize: 14
+                font.weight: Font.DemiBold
+            }
+            Switch {
+                id: translationSwitch
+                objectName: "subtitleTranslationSwitch"
+                Layout.fillWidth: true
+                Layout.topMargin: 7
                 implicitHeight: 44
-                Accessible.name: root.russian ? qsTr("Увеличить задержку звука") : qsTr("Increase audio delay")
-                contentItem: Item {
-                    Image {
-                        anchors.centerIn: parent
+                text: root.russian ? qsTr("Включить для всех видео") : qsTr("Enable for all videos")
+                checked: root.backend.subtitleTranslationEnabled
+                indicator: Rectangle {
+                    implicitWidth: 44
+                    implicitHeight: 26
+                    y: (translationSwitch.height - height) / 2
+                    radius: 13
+                    color: translationSwitch.checked ? "#009df7" : (root.dark ? "#5b6065" : "#b7c2ce")
+                    border.color: translationSwitch.visualFocus ? "#009df7" : "transparent"
+                    border.width: 2
+
+                    Rectangle {
+                        x: translationSwitch.checked ? parent.width - width - 3 : 3
+                        y: 3
                         width: 20
                         height: 20
-                        source: root.iconRoot + (root.dark ? "plus.svg" : "plus-dark.svg")
-                        sourceSize: Qt.size(20, 20)
+                        radius: 10
+                        color: "#ffffff"
                     }
                 }
-                background: Rectangle {
-                    radius: 7
-                    color: increaseDelay.hovered ? (root.dark ? "#425365" : "#dfe7f0") : root.optionColor
-                    border.color: increaseDelay.visualFocus ? "#009df7" : "transparent"
-                    border.width: 2
+                contentItem: Label {
+                    leftPadding: translationSwitch.indicator.width + 10
+                    text: translationSwitch.text
+                    color: root.textColor
+                    verticalAlignment: Text.AlignVCenter
                 }
-                onClicked: root.backend.changeAudioDelay(Math.round((root.backend.audioDelay + 0.05) * 100) / 100)
+                onToggled: root.backend.changeSubtitleTranslation(checked)
             }
-            Button {
-                id: resetDelay
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.topMargin: 8
+                spacing: 6
+
+                Repeater {
+                    model: [
+                        { value: "ru", label: "Русский" },
+                        { value: "en", label: "English" }
+                    ]
+                    delegate: Button {
+                        id: targetOption
+                        required property var modelData
+                        objectName: "subtitleTarget" + modelData.value
+                        Layout.fillWidth: true
+                        implicitHeight: 44
+                        text: modelData.label
+                        checked: root.backend.subtitleTarget === modelData.value
+                        contentItem: Label {
+                            text: targetOption.text
+                            color: targetOption.checked ? "#ffffff" : root.textColor
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        background: Rectangle {
+                            radius: 7
+                            color: targetOption.checked ? "#009df7" : root.optionColor
+                        }
+                        onClicked: root.backend.changeSubtitleTarget(modelData.value)
+                    }
+                }
+            }
+            Label {
+                Layout.topMargin: 10
+                text: root.russian ? qsTr("Модель") : qsTr("Model")
+                color: root.textColor
+                font.pixelSize: 15
+            }
+            ComboBox {
+                id: subtitleModel
+                objectName: "subtitleModel"
+                Layout.fillWidth: true
+                Layout.topMargin: 5
                 implicitHeight: 44
-                text: root.russian ? qsTr("Сброс") : qsTr("Reset")
-                font.pixelSize: 13
-                enabled: root.backend.audioDelay !== 0
-                palette.buttonText: root.textColor
+                enabled: root.backend.subtitleModels.length > 0
+                Accessible.name: root.russian ? qsTr("Модель перевода") : qsTr("Translation model")
+                leftPadding: 12
+                rightPadding: 40
                 background: Rectangle {
                     radius: 7
-                    color: resetDelay.hovered ? (root.dark ? "#425365" : "#dfe7f0") : root.optionColor
-                    border.color: resetDelay.visualFocus ? "#009df7" : "transparent"
+                    color: root.optionColor
+                    border.color: subtitleModel.visualFocus ? "#009df7" : "transparent"
                     border.width: 2
                 }
-                onClicked: root.backend.changeAudioDelay(0)
-            }
-        }
-        Label {
-            Layout.fillWidth: true
-            Layout.topMargin: 6
-            text: root.russian ? qsTr("Плюс задерживает звук") : qsTr("Positive delays audio")
-            color: root.mutedColor
-            font.pixelSize: 12
-        }
-
-        Label {
-            Layout.topMargin: 17
-            text: root.russian ? qsTr("Язык") : qsTr("Language")
-            color: root.mutedColor
-            font.pixelSize: 14
-            font.weight: Font.DemiBold
-        }
-        RowLayout {
-            Layout.fillWidth: true
-            Layout.topMargin: 8
-            spacing: 6
-
-            Repeater {
-                model: [
-                    {
-                        value: "ru",
-                        label: "Русский"
-                    },
-                    {
-                        value: "en",
-                        label: "English"
-                    }
-                ]
-                delegate: Button {
-                    id: languageOption
+                contentItem: Label {
+                    text: subtitleModel.displayText
+                    color: subtitleModel.enabled ? root.textColor : root.mutedColor
+                    verticalAlignment: Text.AlignVCenter
+                    elide: Text.ElideRight
+                }
+                indicator: Image {
+                    x: subtitleModel.width - width - 13
+                    y: (subtitleModel.height - height) / 2
+                    width: 18
+                    height: 18
+                    source: root.iconRoot + (root.dark ? "chevron-down.svg" : "chevron-down-dark.svg")
+                    opacity: subtitleModel.enabled ? 1 : 0.5
+                }
+                delegate: ItemDelegate {
+                    id: modelOption
+                    objectName: "subtitleModelOption" + index
                     required property var modelData
-                    Layout.fillWidth: true
-                    implicitHeight: 44
-                    text: modelData.label
-                    font.pixelSize: 14
-                    checked: root.backend.language === modelData.value
+                    required property int index
+                    width: subtitleModel.width - 8
+                    implicitHeight: 40
+                    text: modelData
                     contentItem: Label {
-                        text: languageOption.text
-                        color: languageOption.checked ? "#ffffff" : root.textColor
-                        font: languageOption.font
-                        horizontalAlignment: Text.AlignHCenter
+                        text: modelOption.text
+                        color: root.textColor
                         verticalAlignment: Text.AlignVCenter
+                        elide: Text.ElideRight
+                    }
+                    background: Rectangle {
+                        radius: 5
+                        color: subtitleModel.highlightedIndex === modelOption.index
+                               ? (root.dark ? "#454b51" : "#dce8f3") : "transparent"
+                    }
+                }
+                popup: Popup {
+                    parent: root.host
+                    x: subtitleModel.mapToItem(root.host, 0, 0).x
+                    y: subtitleModel.mapToItem(root.host, 0, 0).y - implicitHeight - 4
+                    width: subtitleModel.width
+                    implicitHeight: Math.min(contentItem.implicitHeight + 8, 260)
+                    padding: 4
+                    contentItem: ListView {
+                        clip: true
+                        implicitHeight: contentHeight
+                        model: subtitleModel.delegateModel
+                        currentIndex: subtitleModel.highlightedIndex
+                        ScrollIndicator.vertical: ScrollIndicator { }
                     }
                     background: Rectangle {
                         radius: 7
-                        color: languageOption.checked ? "#009df7" : root.optionColor
-                        border.color: languageOption.visualFocus ? "#009df7" : "transparent"
+                        color: root.dark ? "#303336" : "#f4f6f9"
+                        border.color: root.dark ? "#5b6065" : "#cbd5e0"
+                    }
+                }
+                model: [root.russian ? qsTr("Авто") : qsTr("Auto")].concat(root.backend.subtitleModels)
+                currentIndex: root.backend.subtitleModel.length ? root.backend.subtitleModels.indexOf(root.backend.subtitleModel) + 1 : 0
+                onActivated: (index) => root.backend.changeSubtitleModel(index === 0 ? "" : root.backend.subtitleModels[index - 1])
+            }
+            Label {
+                Layout.topMargin: 9
+                text: root.russian ? qsTr("Усилие") : qsTr("Effort")
+                color: root.textColor
+                font.pixelSize: 15
+            }
+            ComboBox {
+                id: subtitleEffort
+                objectName: "subtitleEffort"
+                Layout.fillWidth: true
+                Layout.topMargin: 5
+                implicitHeight: 44
+                enabled: root.backend.subtitleEfforts.length > 0
+                Accessible.name: root.russian ? qsTr("Усилие модели") : qsTr("Model effort")
+                leftPadding: 12
+                rightPadding: 40
+                background: Rectangle {
+                    radius: 7
+                    color: root.optionColor
+                    border.color: subtitleEffort.visualFocus ? "#009df7" : "transparent"
+                    border.width: 2
+                }
+                contentItem: Label {
+                    text: subtitleEffort.displayText
+                    color: subtitleEffort.enabled ? root.textColor : root.mutedColor
+                    verticalAlignment: Text.AlignVCenter
+                    elide: Text.ElideRight
+                }
+                indicator: Image {
+                    x: subtitleEffort.width - width - 13
+                    y: (subtitleEffort.height - height) / 2
+                    width: 18
+                    height: 18
+                    source: root.iconRoot + (root.dark ? "chevron-down.svg" : "chevron-down-dark.svg")
+                    opacity: subtitleEffort.enabled ? 1 : 0.5
+                }
+                delegate: ItemDelegate {
+                    id: effortOption
+                    objectName: "subtitleEffortOption" + index
+                    required property var modelData
+                    required property int index
+                    width: subtitleEffort.width - 8
+                    implicitHeight: 40
+                    text: modelData
+                    contentItem: Label {
+                        text: effortOption.text
+                        color: root.textColor
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    background: Rectangle {
+                        radius: 5
+                        color: subtitleEffort.highlightedIndex === effortOption.index
+                               ? (root.dark ? "#454b51" : "#dce8f3") : "transparent"
+                    }
+                }
+                popup: Popup {
+                    parent: root.host
+                    x: subtitleEffort.mapToItem(root.host, 0, 0).x
+                    y: subtitleEffort.mapToItem(root.host, 0, 0).y - implicitHeight - 4
+                    width: subtitleEffort.width
+                    implicitHeight: Math.min(contentItem.implicitHeight + 8, 260)
+                    padding: 4
+                    contentItem: ListView {
+                        clip: true
+                        implicitHeight: contentHeight
+                        model: subtitleEffort.delegateModel
+                        currentIndex: subtitleEffort.highlightedIndex
+                        ScrollIndicator.vertical: ScrollIndicator { }
+                    }
+                    background: Rectangle {
+                        radius: 7
+                        color: root.dark ? "#303336" : "#f4f6f9"
+                        border.color: root.dark ? "#5b6065" : "#cbd5e0"
+                    }
+                }
+                model: [root.russian ? qsTr("Авто") : qsTr("Auto")].concat(root.backend.subtitleEfforts)
+                currentIndex: root.backend.subtitleEffort.length ? root.backend.subtitleEfforts.indexOf(root.backend.subtitleEffort) + 1 : 0
+                onActivated: (index) => root.backend.changeSubtitleEffort(index === 0 ? "" : root.backend.subtitleEfforts[index - 1])
+            }
+            Label {
+                Layout.fillWidth: true
+                Layout.topMargin: 7
+                visible: ["unavailable", "modelUnavailable", "failed"].includes(root.backend.subtitleStatus)
+                text: root.backend.subtitleStatus === "modelUnavailable"
+                      ? (root.russian ? qsTr("Выбранная модель недоступна") : qsTr("Selected model is unavailable"))
+                      : root.backend.subtitleStatus === "unavailable"
+                        ? (root.russian ? qsTr("Codex недоступен") : qsTr("Codex is unavailable"))
+                        : (root.russian ? qsTr("Не удалось перевести субтитры") : qsTr("Could not translate subtitles"))
+                color: "#ed777e"
+                wrapMode: Text.Wrap
+            }
+
+            Label {
+                Layout.topMargin: 19
+                text: root.russian ? qsTr("Обновления") : qsTr("Updates")
+                color: root.mutedColor
+                font.pixelSize: 14
+                font.weight: Font.DemiBold
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Layout.topMargin: 8
+                spacing: 8
+
+                Button {
+                    id: checkUpdate
+                    objectName: "checkUpdate"
+                    Layout.fillWidth: true
+                    implicitHeight: 44
+                    text: root.russian ? qsTr("Проверить") : qsTr("Check")
+                    enabled: root.backend.updateState !== "checking" && root.backend.updateState !== "downloading"
+                    palette.buttonText: root.textColor
+                    background: Rectangle {
+                        radius: 7
+                        color: checkUpdate.hovered ? (root.dark ? "#425365" : "#dfe7f0") : root.optionColor
+                        border.color: checkUpdate.visualFocus ? "#009df7" : "transparent"
                         border.width: 2
                     }
-                    onClicked: root.backend.changeLanguage(modelData.value)
+                    onClicked: root.backend.checkUpdates()
                 }
-            }
-        }
-
-        Label {
-            Layout.topMargin: 19
-            text: root.russian ? qsTr("Обновления") : qsTr("Updates")
-            color: root.mutedColor
-            font.pixelSize: 14
-            font.weight: Font.DemiBold
-        }
-        RowLayout {
-            Layout.fillWidth: true
-            Layout.topMargin: 8
-            spacing: 8
-
-            Button {
-                id: checkUpdate
-                objectName: "checkUpdate"
-                Layout.fillWidth: true
-                implicitHeight: 44
-                text: root.russian ? qsTr("Проверить") : qsTr("Check")
-                enabled: root.backend.updateState !== "checking" && root.backend.updateState !== "downloading"
-                palette.buttonText: root.textColor
-                background: Rectangle {
-                    radius: 7
-                    color: checkUpdate.hovered ? (root.dark ? "#425365" : "#dfe7f0") : root.optionColor
-                    border.color: checkUpdate.visualFocus ? "#009df7" : "transparent"
-                    border.width: 2
-                }
-                onClicked: root.backend.checkUpdates()
-            }
-            Button {
-                id: applyUpdate
-                objectName: "applyUpdate"
-                Layout.fillWidth: true
-                implicitHeight: 44
-                visible: root.backend.updateVersion.length > 0
-                enabled: root.backend.updateState !== "downloading"
-                text: {
-                    if (root.backend.portable)
-                        return root.russian ? qsTr("Скачать ZIP") : qsTr("Download ZIP")
-                    if (root.backend.updateState === "ready")
-                        return root.russian ? qsTr("Установить") : qsTr("Install")
-                    if (root.backend.updateState === "installFailed" || root.backend.updateState === "downloadFailed")
-                        return root.russian ? qsTr("Повторить") : qsTr("Retry")
-                    return root.russian ? qsTr("Обновить") : qsTr("Update")
-                }
-                palette.buttonText: "#ffffff"
-                background: Rectangle {
-                    radius: 7
-                    color: applyUpdate.hovered ? "#0089db" : "#009df7"
-                    border.color: applyUpdate.visualFocus ? "#ffffff" : "transparent"
-                    border.width: 2
-                }
-                onClicked: {
-                    if (root.backend.portable) {
-                        Qt.openUrlExternally(root.backend.updateUrl)
-                    } else if (root.backend.updateState === "ready") {
-                        if (root.backend.installUpdate())
-                            Qt.quit()
-                    } else {
-                        root.backend.downloadUpdate()
+                Button {
+                    id: applyUpdate
+                    objectName: "applyUpdate"
+                    Layout.fillWidth: true
+                    implicitHeight: 44
+                    visible: root.backend.updateVersion.length > 0
+                    enabled: root.backend.updateState !== "downloading"
+                    text: {
+                        if (root.backend.portable)
+                            return root.russian ? qsTr("Скачать ZIP") : qsTr("Download ZIP")
+                        if (root.backend.updateState === "ready")
+                            return root.russian ? qsTr("Установить") : qsTr("Install")
+                        if (root.backend.updateState === "installFailed" || root.backend.updateState === "downloadFailed")
+                            return root.russian ? qsTr("Повторить") : qsTr("Retry")
+                        return root.russian ? qsTr("Обновить") : qsTr("Update")
+                    }
+                    palette.buttonText: "#ffffff"
+                    background: Rectangle {
+                        radius: 7
+                        color: applyUpdate.hovered ? "#0089db" : "#009df7"
+                        border.color: applyUpdate.visualFocus ? "#ffffff" : "transparent"
+                        border.width: 2
+                    }
+                    onClicked: {
+                        if (root.backend.portable) {
+                            Qt.openUrlExternally(root.backend.updateUrl)
+                        } else if (root.backend.updateState === "ready") {
+                            if (root.backend.installUpdate())
+                                Qt.quit()
+                        } else {
+                            root.backend.downloadUpdate()
+                        }
                     }
                 }
             }
-        }
-        Label {
-            id: updateStatus
-            objectName: "updateStatus"
-            Layout.fillWidth: true
-            Layout.topMargin: 7
-            visible: root.backend.updateState !== "idle"
-            color: root.backend.updateError.length > 0 ? "#ed777e" : root.mutedColor
-            font.pixelSize: 13
-            wrapMode: Text.Wrap
-            Accessible.description: root.backend.updateError
-            text: {
-                switch (root.backend.updateState) {
-                case "checking":
-                    return root.russian ? qsTr("Проверка обновлений…") : qsTr("Checking for updates…")
-                case "unpublished":
-                    return root.russian ? qsTr("Пока нет опубликованной версии") : qsTr("No release is available yet")
-                case "current":
-                    return root.russian ? qsTr("Установлена актуальная версия") : qsTr("qplay is up to date")
-                case "available":
-                case "downloadFailed":
-                    if (root.backend.updateState === "downloadFailed")
-                        return root.russian ? qsTr("Не удалось загрузить обновление") : qsTr("Couldn't download the update")
-                    return root.russian ? qsTr("Доступна версия %1").arg(root.backend.updateVersion)
-                                        : qsTr("Version %1 is available").arg(root.backend.updateVersion)
-                case "downloading":
-                    return root.russian ? qsTr("Загрузка: %1%").arg(root.backend.updateProgress)
-                                        : qsTr("Downloading: %1%").arg(root.backend.updateProgress)
-                case "ready":
-                    return root.russian ? qsTr("Обновление готово к установке") : qsTr("Update ready to install")
-                case "checkFailed":
-                    return root.russian ? qsTr("Не удалось проверить обновления") : qsTr("Couldn't check for updates")
-                case "installFailed":
-                    return root.russian ? qsTr("Не удалось начать установку") : qsTr("Couldn't start installation")
-                default:
-                    return ""
+            Label {
+                id: updateStatus
+                objectName: "updateStatus"
+                Layout.fillWidth: true
+                Layout.topMargin: 7
+                visible: root.backend.updateState !== "idle"
+                color: root.backend.updateError.length > 0 ? "#ed777e" : root.mutedColor
+                font.pixelSize: 13
+                wrapMode: Text.Wrap
+                Accessible.description: root.backend.updateError
+                text: {
+                    switch (root.backend.updateState) {
+                    case "checking":
+                        return root.russian ? qsTr("Проверка обновлений…") : qsTr("Checking for updates…")
+                    case "unpublished":
+                        return root.russian ? qsTr("Пока нет опубликованной версии") : qsTr("No release is available yet")
+                    case "current":
+                        return root.russian ? qsTr("Установлена актуальная версия") : qsTr("qplay is up to date")
+                    case "available":
+                    case "downloadFailed":
+                        if (root.backend.updateState === "downloadFailed")
+                            return root.russian ? qsTr("Не удалось загрузить обновление") : qsTr("Couldn't download the update")
+                        return root.russian ? qsTr("Доступна версия %1").arg(root.backend.updateVersion)
+                                            : qsTr("Version %1 is available").arg(root.backend.updateVersion)
+                    case "downloading":
+                        return root.russian ? qsTr("Загрузка: %1%").arg(root.backend.updateProgress)
+                                            : qsTr("Downloading: %1%").arg(root.backend.updateProgress)
+                    case "ready":
+                        return root.russian ? qsTr("Обновление готово к установке") : qsTr("Update ready to install")
+                    case "checkFailed":
+                        return root.russian ? qsTr("Не удалось проверить обновления") : qsTr("Couldn't check for updates")
+                    case "installFailed":
+                        return root.russian ? qsTr("Не удалось начать установку") : qsTr("Couldn't start installation")
+                    default:
+                        return ""
+                    }
                 }
+                ToolTip.visible: updateHover.hovered && root.backend.updateError.length > 0
+                ToolTip.text: root.backend.updateError
+                HoverHandler { id: updateHover }
             }
-            ToolTip.visible: updateHover.hovered && root.backend.updateError.length > 0
-            ToolTip.text: root.backend.updateError
-            HoverHandler { id: updateHover }
-        }
 
-        Label {
-            Layout.fillWidth: true
-            Layout.topMargin: 14
-            visible: root.backend.settingsError.length > 0
-            text: root.backend.settingsError
-            color: "#ed777e"
-            wrapMode: Text.Wrap
+            Label {
+                Layout.fillWidth: true
+                Layout.topMargin: 14
+                visible: root.backend.settingsError.length > 0
+                text: root.backend.settingsError
+                color: "#ed777e"
+                wrapMode: Text.Wrap
+            }
         }
     }
 }

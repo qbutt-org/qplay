@@ -43,6 +43,7 @@ impl ffi::PlayerController {
         match media_path(&media.to_string()) {
             Ok(media) => {
                 self.as_mut().cancel_gpu();
+                self.as_mut().cancel_subtitle_job();
                 let waiting = is_youtube_url(&media) && !self.online_ready;
                 let mut state = self.as_mut().rust_mut();
                 state.gpu.interlaced_seen = false;
@@ -82,11 +83,17 @@ impl ffi::PlayerController {
 
     pub(super) fn seek(mut self: Pin<&mut Self>, position: f64) {
         if self.media_loaded() && position.is_finite() && position >= 0.0 {
+            if self.subtitle_translation_view {
+                self.as_mut().cancel_subtitle_job();
+                self.as_mut().restore_original_subtitles();
+                self.as_mut().rust_mut().position = position;
+            }
             if let Some(quality) = self.as_mut().rust_mut().gpu.quality.as_mut() {
                 quality.filter_changed();
             }
             self.as_mut()
                 .dispatch(&["seek", &position.to_string(), "absolute+exact"]);
+            self.as_mut().maybe_start_subtitle_window();
         }
     }
 
@@ -123,7 +130,15 @@ impl ffi::PlayerController {
         if !valid || !self.media_loaded() {
             return;
         }
+        if kind == "sub" {
+            self.as_mut().cancel_subtitle_job();
+            let mut state = self.as_mut().rust_mut();
+            state.subtitle_original_id = Some(id);
+            state.subtitle_translation_view = false;
+            state.subtitle_status = "idle".into();
+        }
         self.as_mut().dispatch(&["set", property, &id.to_string()]);
+        self.as_mut().state_changed();
     }
 
     pub(super) fn select_automatic_track(mut self: Pin<&mut Self>, kind: &QString) {
@@ -135,24 +150,38 @@ impl ffi::PlayerController {
             "sub" => "sid",
             _ => return,
         };
+        if property == "sid" {
+            self.as_mut().cancel_subtitle_job();
+            self.as_mut().rust_mut().subtitle_translation_view = false;
+        }
         self.as_mut().dispatch(&["set", property, "auto"]);
+        self.as_mut().state_changed();
     }
 
     pub(super) fn disable_subtitles(mut self: Pin<&mut Self>) {
         if self.media_loaded() {
+            self.as_mut().cancel_subtitle_job();
+            self.as_mut().rust_mut().subtitle_translation_view = false;
             self.as_mut().dispatch(&["set", "sid", "no"]);
+            self.as_mut().state_changed();
         }
     }
 
     pub(super) fn add_subtitle(mut self: Pin<&mut Self>, path: &QString) {
         match media_path(&path.to_string()) {
-            Ok(path) => self.as_mut().dispatch(&["sub-add", &path, "select"]),
+            Ok(path) => {
+                self.as_mut().cancel_subtitle_job();
+                self.as_mut().rust_mut().subtitle_translation_view = false;
+                self.as_mut().dispatch(&["sub-add", &path, "select"]);
+                self.as_mut().state_changed();
+            }
             Err(error) => self.as_mut().fail(error),
         }
     }
 
     pub(super) fn stop(mut self: Pin<&mut Self>) {
         self.as_mut().cancel_gpu();
+        self.as_mut().cancel_subtitle_job();
         let mut state = self.as_mut().rust_mut();
         state.media = None;
         state.file_loaded = false;
