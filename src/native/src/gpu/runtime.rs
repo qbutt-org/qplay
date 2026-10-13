@@ -138,6 +138,7 @@ impl Runtime {
             Duration::from_secs(90),
             MAX_STATUS_BYTES,
             None,
+            None,
         )?;
         let response: Value = serde_json::from_slice(&output)
             .map_err(|error| format!("Read TensorRT engine status: {error}"))?;
@@ -150,6 +151,7 @@ impl Runtime {
             cancel,
             Duration::from_secs(30 * 60),
             MAX_STATUS_BYTES,
+            None,
             None,
         )?;
         Ok(false) // Start a compiled graph only on the next file or explicit choice.
@@ -184,6 +186,7 @@ impl Manager {
             Duration::from_secs(30),
             MAX_STATUS_BYTES,
             Some(("QPLAY_MEDIA_RUNTIME", &self.runtime_root)),
+            None,
         )?;
         let status: Status = serde_json::from_slice(&bytes)
             .map_err(|error| format!("Read frame generation status: {error}"))?;
@@ -238,6 +241,7 @@ impl Manager {
         } else {
             "repair"
         };
+        let mut error_output = Vec::new();
         run_bounded(
             &self.executable,
             &[command],
@@ -245,7 +249,24 @@ impl Manager {
             Duration::from_secs(30 * 60),
             MAX_STATUS_BYTES,
             Some(("QPLAY_MEDIA_RUNTIME", &self.runtime_root)),
-        )?;
+            Some(&mut error_output),
+        )
+        .map_err(|error| {
+            let insufficient_space = serde_json::from_slice::<Value>(&error_output)
+                .ok()
+                .and_then(|message| {
+                    message
+                        .get("code")?
+                        .as_str()
+                        .map(|code| code == "insufficient_space")
+                })
+                .unwrap_or(false);
+            if insufficient_space {
+                "framegenDiskSpace".to_owned()
+            } else {
+                error
+            }
+        })?;
         self.inspect(cancel)?
             .ok_or_else(|| "The frame generation runtime is still unavailable.".into())
     }

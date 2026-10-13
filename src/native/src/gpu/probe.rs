@@ -163,6 +163,7 @@ pub fn classify_file(
         Duration::from_secs(8),
         MAX_OUTPUT_BYTES,
         None,
+        None,
     )?;
     let document: ProbeDocument = serde_json::from_slice(&bytes)
         .map_err(|error| format!("Parse video style metadata: {error}"))?;

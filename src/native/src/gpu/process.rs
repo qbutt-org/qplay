@@ -52,6 +52,7 @@ pub fn run_bounded(
     timeout: Duration,
     max_output_bytes: u64,
     environment: Option<(&str, &Path)>,
+    error_output: Option<&mut Vec<u8>>,
 ) -> Result<Vec<u8>, String> {
     if cancel.load(Ordering::Acquire) {
         return Err("The helper was cancelled.".into());
@@ -60,7 +61,11 @@ pub fn run_bounded(
     command
         .args(args)
         .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+        .stderr(if error_output.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        });
     if let Some((name, value)) = environment {
         command.env(name, value);
     }
@@ -85,12 +90,29 @@ pub fn run_bounded(
             .read_to_end(&mut bytes)
             .map(|_| bytes)
     });
+    let error_reader = child.stderr.take().map(|mut stream| {
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let mut buffer = [0_u8; 4096];
+            loop {
+                let count = stream.read(&mut buffer)?;
+                if count == 0 {
+                    return Ok::<_, std::io::Error>(bytes);
+                }
+                let remaining = 4096 - bytes.len();
+                bytes.extend_from_slice(&buffer[..count.min(remaining)]);
+            }
+        })
+    });
     let started = Instant::now();
     let status = loop {
         if cancel.load(Ordering::Acquire) || started.elapsed() >= timeout {
             let _ = child.kill();
             let _ = child.wait();
             let _ = reader.join();
+            if let Some(error_reader) = error_reader {
+                let _ = error_reader.join();
+            }
             return Err("The helper was cancelled or timed out.".into());
         }
         match child.try_wait() {
@@ -100,6 +122,9 @@ pub fn run_bounded(
                 let _ = child.kill();
                 let _ = child.wait();
                 let _ = reader.join();
+                if let Some(error_reader) = error_reader {
+                    let _ = error_reader.join();
+                }
                 return Err(format!("Wait for helper process: {error}"));
             }
         }
@@ -108,6 +133,12 @@ pub fn run_bounded(
         .join()
         .map_err(|_| "Read helper output: reader stopped unexpectedly.")?
         .map_err(|error| format!("Read helper output: {error}"))?;
+    if let (Some(error_reader), Some(error_output)) = (error_reader, error_output) {
+        *error_output = error_reader
+            .join()
+            .map_err(|_| "Read helper error output: reader stopped unexpectedly.")?
+            .map_err(|error| format!("Read helper error output: {error}"))?;
+    }
     if !status.success() || bytes.len() as u64 > max_output_bytes {
         return Err(format!("The helper exited with status {status}."));
     }

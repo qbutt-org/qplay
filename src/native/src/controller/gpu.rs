@@ -616,7 +616,9 @@ impl ffi::PlayerController {
             GpuCommand::Shader { preset, generation } if generation == self.gpu.generation => {
                 let gpu = &mut self.as_mut().rust_mut().gpu;
                 gpu.applied_shader = preset;
-                gpu.error.clear();
+                if !matches!(gpu.framegen_status.as_str(), "unavailable" | "error") {
+                    gpu.error.clear();
+                }
             }
             GpuCommand::AddFilter { filter, generation } if generation == self.gpu.generation => {
                 self.as_mut().rust_mut().gpu.active_filter = Some(filter);

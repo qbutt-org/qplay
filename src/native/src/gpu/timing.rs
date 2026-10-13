@@ -330,6 +330,7 @@ pub fn probe_local_timing(
         Duration::from_secs(8),
         MAX_OUTPUT_BYTES,
         None,
+        None,
     )?;
     let document: TimingDocument = serde_json::from_slice(&bytes)
         .map_err(|error| format!("Parse video timing metadata: {error}"))?;
@@ -422,7 +423,15 @@ pub fn probe_network_timing(
         "--",
         &url,
     ]);
-    let bytes = run_bounded(ffprobe, &args, cancel, timeout, MAX_OUTPUT_BYTES, None)?;
+    let bytes = run_bounded(
+        ffprobe,
+        &args,
+        cancel,
+        timeout,
+        MAX_OUTPUT_BYTES,
+        None,
+        None,
+    )?;
     let document: TimingDocument = serde_json::from_slice(&bytes)
         .map_err(|error| format!("Parse network timing metadata: {error}"))?;
     analyze(document)

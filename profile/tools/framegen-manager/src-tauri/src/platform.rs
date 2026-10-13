@@ -6,6 +6,26 @@ use std::path::PathBuf;
 use std::process::Command;
 
 #[cfg(windows)]
+pub fn disk_full(error: &anyhow::Error) -> bool {
+    use std::io;
+    use windows_sys::Win32::Foundation::{ERROR_DISK_FULL, ERROR_HANDLE_DISK_FULL};
+
+    error.chain().any(|cause| {
+        cause.downcast_ref::<io::Error>().is_some_and(|io| {
+            matches!(
+                io.raw_os_error(),
+                Some(code) if code == ERROR_DISK_FULL as i32 || code == ERROR_HANDLE_DISK_FULL as i32
+            )
+        })
+    })
+}
+
+#[cfg(not(windows))]
+pub fn disk_full(_error: &anyhow::Error) -> bool {
+    false
+}
+
+#[cfg(windows)]
 pub fn available_space(path: &std::path::Path) -> Result<u64> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;

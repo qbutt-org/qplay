@@ -530,6 +530,18 @@ Popup {
                 spacing: 2
 
                 Label {
+                    objectName: "gpuErrorMessage"
+                    visible: root.backend.gpuError.length > 0
+                    Layout.fillWidth: true
+                    Layout.bottomMargin: 8
+                    wrapMode: Text.WordWrap
+                    text: root.backend.gpuError === "framegenDiskSpace"
+                          ? (root.russian ? qsTr("Недостаточно места на диске для генерации кадров") : qsTr("Not enough disk space for frame generation"))
+                          : (root.russian ? qsTr("Не удалось применить FX") : qsTr("Could not apply FX"))
+                    color: "#ff9a9a"
+                }
+
+                Label {
                     Layout.topMargin: 10
                     Layout.bottomMargin: 4
                     text: root.russian ? qsTr("Генерация кадров") : qsTr("Frame generation")
@@ -660,15 +672,6 @@ Popup {
                             }
                         }
                     }
-                }
-
-                Label {
-                    visible: root.backend.gpuError.length > 0
-                    Layout.fillWidth: true
-                    Layout.topMargin: 8
-                    wrapMode: Text.WordWrap
-                    text: root.russian ? qsTr("Не удалось применить FX") : qsTr("Could not apply FX")
-                    color: "#ff9a9a"
                 }
             }
         }

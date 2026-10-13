@@ -851,8 +851,30 @@ int main(int argc, char *argv[])
                 wait([&] { return backend.framegenStatus() == QStringLiteral("unavailable"); },
                     "Insufficient disk space did not disable frame generation");
                 evidence[QStringLiteral("framegenError")] = backend.gpuError();
-                require(!backend.gpuError().isEmpty(),
-                    "Frame generation did not report a preparation failure");
+                require(backend.gpuError() == QStringLiteral("framegenDiskSpace"),
+                    "Frame generation did not classify insufficient disk space");
+                require(QMetaObject::invokeMethod(playbackMenu, "open"),
+                    "Open playback menu after frame generation failure failed");
+                playbackMenu->setProperty("page", 4);
+                auto *diskMessage = findVisualItem(popupContent, QStringLiteral("gpuErrorMessage"));
+                require(diskMessage != nullptr, "Frame generation error message is unavailable");
+                wait([&] { return diskMessage->isVisible(); },
+                    "Frame generation error message did not appear");
+                require(diskMessage->property("text").toString() == QStringLiteral("Not enough disk space for frame generation"),
+                    "English disk-space error is not rendered");
+                tick();
+                require(target.toImage().save(evidencePrefix + QStringLiteral(".framegen-disk-en.png")),
+                    "Save English disk-space error failed");
+                require(root->setProperty("russian", true), "Switch scene to Russian failed");
+                wait([&] { return diskMessage->property("text").toString()
+                    == QStringLiteral("Недостаточно места на диске для генерации кадров"); },
+                    "Russian disk-space error is not rendered");
+                tick();
+                require(target.toImage().save(evidencePrefix + QStringLiteral(".framegen-disk-ru.png")),
+                    "Save Russian disk-space error failed");
+                root->setProperty("russian", false);
+                require(QMetaObject::invokeMethod(playbackMenu, "close"),
+                    "Close playback menu after frame generation failure failed");
                 const double start = backend.position();
                 const QImage firstFrame = target.toImage().copy(0, 88, 1280, 500);
                 wait([&] { return backend.position() >= start + 1.5; },

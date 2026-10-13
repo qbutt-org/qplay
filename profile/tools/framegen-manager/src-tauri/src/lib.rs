@@ -80,7 +80,13 @@ fn run_cli(command: Command) -> anyhow::Result<()> {
 pub fn run(cli: Cli) {
     if let Some(command) = cli.command {
         if let Err(error) = run_cli(command) {
-            eprintln!("{}", serde_json::json!({ "error": format!("{error:#}") }));
+            let mut response = serde_json::json!({ "error": format!("{error:#}") });
+            if error.downcast_ref::<runtime::InsufficientSpace>().is_some()
+                || platform::disk_full(&error)
+            {
+                response["code"] = "insufficient_space".into();
+            }
+            eprintln!("{response}");
             std::process::exit(1);
         }
         return;

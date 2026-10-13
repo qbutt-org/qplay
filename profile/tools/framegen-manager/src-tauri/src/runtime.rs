@@ -26,6 +26,25 @@ const MANIFEST_VERSION: u32 = 3;
 const REMOVAL_MARKER: &str = ".framegen-manager-removal.json";
 const GC_DIR: &str = "gc";
 const FREE_SPACE_RESERVE: u64 = 512 * 1024 * 1024;
+
+#[derive(Debug)]
+pub struct InsufficientSpace {
+    required: u64,
+    available: u64,
+}
+
+impl std::fmt::Display for InsufficientSpace {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "Frame generation needs {} free bytes for pinned downloads, staging and reserve; {} bytes are available",
+            self.required, self.available
+        )
+    }
+}
+
+impl std::error::Error for InsufficientSpace {}
+
 const TRT_COMMON_FILES: &[&str] = &[
     "nvinfer_10.dll",
     "nvinfer_builder_resource_ptx_10.dll",
@@ -873,9 +892,11 @@ fn ensure_install_space(
             discard_partial(*asset, cache)?;
         }
     }
-    bail!(
-        "Frame generation needs {required} free bytes for pinned downloads, staging and reserve; {available} bytes are available"
-    )
+    Err(InsufficientSpace {
+        required,
+        available,
+    }
+    .into())
 }
 
 fn cached_asset_is_valid(cache: &Path, asset: Asset) -> bool {
