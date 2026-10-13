@@ -32,6 +32,14 @@ pub struct SubtitleIdentity {
     pub source_digest: String,
 }
 
+impl SubtitleIdentity {
+    fn valid(&self) -> bool {
+        hex_digest(&self.media_digest)
+            && hex_digest(&self.source_digest)
+            && self.stream_index.is_none_or(|index| index <= 512)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SubtitleCacheKey {
@@ -66,9 +74,7 @@ impl SubtitleCacheKey {
 
     pub fn validate(&self) -> Result<(), SubtitleCacheError> {
         let fragment = self.fragment_id.split_once(':');
-        if !hex_digest(&self.identity.media_digest)
-            || !hex_digest(&self.identity.source_digest)
-            || self.identity.stream_index.is_some_and(|index| index > 512)
+        if !self.identity.valid()
             || !fragment.is_some_and(|(digest, index)| {
                 hex_digest(digest)
                     && !index.is_empty()
@@ -139,6 +145,98 @@ impl SubtitleCache {
             };
         }
         let path = self.path(&digest);
+        let bytes = serde_json::to_vec(text).map_err(|_| SubtitleCacheError::Invalid)?;
+        let result = self.write(&path, &bytes);
+        if result.is_err() {
+            if let Some(existing) = self.read(key)? {
+                return if existing == text {
+                    Ok(())
+                } else {
+                    Err(SubtitleCacheError::Conflict)
+                };
+            }
+        }
+        result
+    }
+
+    pub(super) fn resolved_selection(
+        &self,
+        identity: &SubtitleIdentity,
+        target: &str,
+        requested_model: Option<&str>,
+        requested_effort: Option<&str>,
+    ) -> Result<Option<(String, String)>, SubtitleCacheError> {
+        let path = self.selection_path(identity, target, requested_model, requested_effort)?;
+        let bytes = match fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        if bytes.len() > 512 {
+            return Err(SubtitleCacheError::Conflict);
+        }
+        let (model, effort): (String, String) =
+            serde_json::from_slice(&bytes).map_err(|_| SubtitleCacheError::Conflict)?;
+        if !model_token(&model, 128)
+            || !model_token(&effort, 32)
+            || requested_model.is_some_and(|requested| requested != model)
+            || requested_effort.is_some_and(|requested| requested != effort)
+        {
+            return Err(SubtitleCacheError::Conflict);
+        }
+        Ok(Some((model, effort)))
+    }
+
+    pub(super) fn remember_selection(
+        &mut self,
+        accepted: &SubtitleCacheKey,
+        requested_model: Option<&str>,
+        requested_effort: Option<&str>,
+    ) -> Result<(), SubtitleCacheError> {
+        if self.read(accepted)?.is_none()
+            || requested_model.is_some_and(|model| model != accepted.model)
+            || requested_effort.is_some_and(|effort| effort != accepted.effort)
+        {
+            return Err(SubtitleCacheError::Invalid);
+        }
+        let path = self.selection_path(
+            &accepted.identity,
+            &accepted.target_language,
+            requested_model,
+            requested_effort,
+        )?;
+        let bytes = serde_json::to_vec(&(&accepted.model, &accepted.effort))
+            .map_err(|_| SubtitleCacheError::Invalid)?;
+        self.write(&path, &bytes)
+    }
+
+    fn selection_path(
+        &self,
+        identity: &SubtitleIdentity,
+        target: &str,
+        requested_model: Option<&str>,
+        requested_effort: Option<&str>,
+    ) -> Result<PathBuf, SubtitleCacheError> {
+        if !identity.valid()
+            || !matches!(target, "ru" | "en")
+            || requested_model.is_some_and(|model| !model_token(model, 128))
+            || requested_effort.is_some_and(|effort| !model_token(effort, 32))
+        {
+            return Err(SubtitleCacheError::Invalid);
+        }
+        let bytes = serde_json::to_vec(&(
+            PIPELINE_VERSION,
+            identity,
+            target,
+            requested_model,
+            requested_effort,
+        ))
+        .map_err(|_| SubtitleCacheError::Invalid)?;
+        let digest = format!("{:x}", Sha256::digest(bytes));
+        Ok(self.root.join("selections").join(format!("{digest}.json")))
+    }
+
+    fn write(&self, path: &Path, bytes: &[u8]) -> Result<(), SubtitleCacheError> {
         fs::create_dir_all(path.parent().ok_or(SubtitleCacheError::Invalid)?)?;
         let pending = path.with_extension(format!(
             "{}.{}.tmp",
@@ -150,20 +248,12 @@ impl SubtitleCache {
                 .write(true)
                 .create_new(true)
                 .open(&pending)?;
-            let bytes = serde_json::to_vec(text).map_err(std::io::Error::other)?;
-            file.write_all(&bytes)?;
+            file.write_all(bytes)?;
             file.sync_all()?;
-            fs::rename(&pending, &path)
+            fs::rename(&pending, path)
         })();
         if result.is_err() {
             let _ = fs::remove_file(&pending);
-            if let Some(existing) = self.read(key)? {
-                return if existing == text {
-                    Ok(())
-                } else {
-                    Err(SubtitleCacheError::Conflict)
-                };
-            }
         }
         result.map_err(SubtitleCacheError::Io)
     }

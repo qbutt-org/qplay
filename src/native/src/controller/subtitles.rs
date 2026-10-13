@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -87,9 +88,11 @@ pub fn run_subtitle_task(task: Box<SubtitleTask>) {
                 if let Err(status) = result {
                     let mut state = player.as_mut().rust_mut();
                     state.subtitle_status = QString::from(status);
-                    state.subtitle_translation_view = false;
-                    state.subtitle_window_start_ms = None;
-                    player.as_mut().restore_original_subtitles();
+                    if state.subtitle_output_path.is_none() {
+                        state.subtitle_translation_view = false;
+                        state.subtitle_window_start_ms = None;
+                        player.as_mut().restore_original_subtitles();
+                    }
                 } else {
                     if player.subtitle_status.to_string() != "failed" {
                         player.as_mut().rust_mut().subtitle_status = "ready".into();
@@ -105,15 +108,6 @@ async fn translate_window(
     task: WindowTask,
     thread: &cxx_qt::CxxQtThread<ffi::PlayerController>,
 ) -> Result<(), &'static str> {
-    let mut selection_cancel = task.cancelled.clone();
-    let (model, effort) = tokio::select! {
-        result = codex::resolve_selection(
-            ModelModality::Text,
-            task.preferences.model.as_deref(),
-            task.preferences.effort.as_deref(),
-        ) => result.map_err(codex_status)?,
-        _ = selection_cancel.changed() => return Err("cancelled"),
-    };
     let digest = task
         .media
         .get(task.cancelled.clone())
@@ -166,41 +160,87 @@ async fn translate_window(
             .map_err(source_status)?
         }
     };
-    let options = SubtitleTranslationOptions {
-        identity,
-        target_language: task.preferences.target_language.clone(),
-        model,
-        effort,
-    };
-    let mut accepted = task
+    let options = task
         .service
-        .cached_window(&document, task.position_ms, &options, task.generation)
+        .cached_options(
+            &identity,
+            &task.preferences.target_language,
+            task.preferences.model.as_deref(),
+            task.preferences.effort.as_deref(),
+            task.generation,
+        )
         .map_err(|_| "failed")?;
-    loop {
-        if *task.cancelled.borrow() {
-            return Err("cancelled");
-        }
-        let Some(batch) = task
+    let mut accepted = match &options {
+        Some(options) => task
             .service
-            .translate_window(
-                &document,
-                task.position_ms,
-                &options,
-                task.generation,
-                task.cancelled.clone(),
-            )
-            .await
-            .map_err(|error| match error {
-                crate::subtitles::SubtitleServiceError::Codex(error) => codex_status(error),
-                _ => "failed",
-            })?
-        else {
-            break;
+            .cached_window(&document, task.position_ms, options, task.generation)
+            .map_err(|_| "failed")?,
+        None => HashMap::new(),
+    };
+    let result = async {
+        let options = if let Some(options) = options {
+            options
+        } else {
+            let mut selection_cancel = task.cancelled.clone();
+            let (model, effort) = tokio::select! {
+                result = codex::resolve_selection(
+                    ModelModality::Text,
+                    task.preferences.model.as_deref(),
+                    task.preferences.effort.as_deref(),
+                ) => result.map_err(codex_status)?,
+                _ = selection_cancel.changed() => return Err("cancelled"),
+            };
+            let options = SubtitleTranslationOptions {
+                identity,
+                target_language: task.preferences.target_language.clone(),
+                model,
+                effort,
+            };
+            accepted = task
+                .service
+                .cached_window(&document, task.position_ms, &options, task.generation)
+                .map_err(|_| "failed")?;
+            options
         };
-        for (key, text) in batch.accepted {
-            accepted.insert(key.fragment_id, text);
+        loop {
+            if *task.cancelled.borrow() {
+                return Err("cancelled");
+            }
+            let Some(batch) = task
+                .service
+                .translate_window(
+                    &document,
+                    task.position_ms,
+                    &options,
+                    task.generation,
+                    task.cancelled.clone(),
+                )
+                .await
+                .map_err(|error| match error {
+                    crate::subtitles::SubtitleServiceError::Codex(error) => codex_status(error),
+                    _ => "failed",
+                })?
+            else {
+                break;
+            };
+            let accepted_key = batch.accepted.first().ok_or("failed")?.0.clone();
+            for (key, text) in batch.accepted {
+                accepted.insert(key.fragment_id, text);
+            }
+            if task.preferences.model.is_none() || task.preferences.effort.is_none() {
+                task.service
+                    .remember_selection(
+                        &accepted_key,
+                        task.preferences.model.as_deref(),
+                        task.preferences.effort.as_deref(),
+                        task.generation,
+                    )
+                    .map_err(|_| "failed")?;
+            }
         }
+        Ok(())
     }
+    .await;
     if !accepted.is_empty() {
         let format = document.format;
         let output = task.service.output_path(task.generation, format);
@@ -214,7 +254,7 @@ async fn translate_window(
             }
         });
     }
-    Ok(())
+    result
 }
 
 fn external_format(source: &str) -> Option<SubtitleFormat> {

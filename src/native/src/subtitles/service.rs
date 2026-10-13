@@ -10,8 +10,9 @@ use tokio::sync::watch;
 
 use super::cache::SubtitleCacheError;
 use super::{
-    SubtitleCache, SubtitleDocument, SubtitleError, SubtitleFormat, SubtitleTranslationOptions,
-    TranslatedSubtitleBatch, pending_batch, translate_batch, window_bounds,
+    SubtitleCache, SubtitleCacheKey, SubtitleDocument, SubtitleError, SubtitleFormat,
+    SubtitleIdentity, SubtitleTranslationOptions, TranslatedSubtitleBatch, pending_batch,
+    translate_batch, window_bounds,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -73,6 +74,60 @@ impl SubtitleService {
         self.generation
             .fetch_add(1, Ordering::SeqCst)
             .wrapping_add(1)
+    }
+
+    /// An explicit pair or a previously accepted automatic choice is enough
+    /// to read cached cues. Catalog/account discovery belongs only to a miss.
+    pub fn cached_options(
+        &self,
+        identity: &SubtitleIdentity,
+        target: &str,
+        requested_model: Option<&str>,
+        requested_effort: Option<&str>,
+        generation: u64,
+    ) -> Result<Option<SubtitleTranslationOptions>, SubtitleServiceError> {
+        if self.generation.load(Ordering::SeqCst) != generation {
+            return Err(SubtitleServiceError::Stale);
+        }
+        let cache = self
+            .cache
+            .lock()
+            .map_err(|_| SubtitleServiceError::Unavailable)?;
+        let selection = match (requested_model, requested_effort) {
+            (Some(model), Some(effort)) => Some((model.to_owned(), effort.to_owned())),
+            _ => cache.resolved_selection(identity, target, requested_model, requested_effort)?,
+        };
+        if self.generation.load(Ordering::SeqCst) != generation {
+            return Err(SubtitleServiceError::Stale);
+        }
+        Ok(selection.map(|(model, effort)| SubtitleTranslationOptions {
+            identity: identity.clone(),
+            target_language: target.to_owned(),
+            model,
+            effort,
+        }))
+    }
+
+    /// Record only a choice backed by an admitted cue in this exact cache.
+    pub fn remember_selection(
+        &self,
+        accepted: &SubtitleCacheKey,
+        requested_model: Option<&str>,
+        requested_effort: Option<&str>,
+        generation: u64,
+    ) -> Result<(), SubtitleServiceError> {
+        let mut cache = self
+            .cache
+            .lock()
+            .map_err(|_| SubtitleServiceError::Unavailable)?;
+        if self.generation.load(Ordering::SeqCst) != generation {
+            return Err(SubtitleServiceError::Stale);
+        }
+        cache.remember_selection(accepted, requested_model, requested_effort)?;
+        if self.generation.load(Ordering::SeqCst) != generation {
+            return Err(SubtitleServiceError::Stale);
+        }
+        Ok(())
     }
 
     /// Return only accepted text for the current read-ahead window.

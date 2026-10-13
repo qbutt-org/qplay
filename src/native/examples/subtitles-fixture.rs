@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use sha2::{Digest, Sha256};
+
 use qplay_native::subtitles::{
     MpvEmbeddedTrack, PlaybackMedia, SubtitleCache, SubtitleDocument, SubtitleFormat,
     SubtitleIdentity, SubtitleService, SubtitleServiceError, SubtitleSourceError,
@@ -16,6 +18,13 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
+    if std::env::var_os("QPLAY_SUBTITLE_LIVE_CODEX").is_some() {
+        return live_codex_fixture().await;
+    }
+    if let Ok(evidence) = std::env::var("QPLAY_SUBTITLE_CACHE_EVIDENCE") {
+        return cached_codex_fixture(Path::new(&evidence)).await;
+    }
+
     let header = "[Script Info]\r\nScriptType: v4.00+\r\n\r\n[Events]\r\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\r\n";
     let cue = "Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,{\\an8}Hello\\N{\\i1}world{\\i0}!";
     let later = "Dialogue: 0,0:01:01.00,0:01:03.00,Default,,0,0,0,,See you soon.";
@@ -191,9 +200,6 @@ async fn main() -> Result<()> {
 
     if let Ok(library) = std::env::var("QPLAY_SUBTITLE_FIXTURE_LIBRARY") {
         media_fixture(Path::new(&library)).await?;
-    }
-    if std::env::var_os("QPLAY_SUBTITLE_LIVE_CODEX").is_some() {
-        live_codex_fixture().await?;
     }
     println!("subtitle-fixture PASS: exact render, bounds, cache, seek, cancel, corruption");
     Ok(())
@@ -430,31 +436,291 @@ async fn media_fixture(library: &Path) -> Result<()> {
 }
 
 async fn live_codex_fixture() -> Result<()> {
+    let media = std::path::PathBuf::from(std::env::var("QPLAY_SUBTITLE_LIVE_MEDIA")?);
+    let evidence = std::path::PathBuf::from(std::env::var("QPLAY_SUBTITLE_LIVE_EVIDENCE")?);
+    let data = evidence.join("profile/data");
+    std::fs::create_dir_all(&evidence)?;
+    let source = evidence.join("original.ass");
+    std::fs::write(
+        &source,
+        r"[Script Info]
+ScriptType: v4.00+
+PlayResX: 1280
+PlayResY: 720
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Arial,36,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,30,30,36,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:01.00,0:00:20.00,Default,Alice,0,0,0,,{\an8}Hello, Alice.\N{\i1}Bob is waiting at the gate.{\i0}
+Dialogue: 0,0:01:01.00,0:01:15.00,Default,Bob,0,0,0,,Alice, please keep Bob safe.
+",
+    )?;
+    let (document, source_digest) = read_local_external(&source, SubtitleFormat::Ass).await?;
+    let (_sender, cancelled) = watch::channel(false);
+    let media_digest = digest_local_media(&media, cancelled.clone()).await?;
     let (model, effort) =
         qbutt_codex::resolve_selection(qbutt_codex::ModelModality::Text, None, None).await?;
-    let document = SubtitleDocument::parse(
-        "1\n00:00:01,000 --> 00:00:03,000\nHello, Alice.\n",
-        SubtitleFormat::Srt,
-    )?;
-    let batch = pending_batch(&document, 1_000, &HashMap::new())?;
     let options = SubtitleTranslationOptions {
         identity: SubtitleIdentity {
-            media_digest: "c".repeat(64),
+            media_digest,
             stream_index: None,
-            source_digest: "d".repeat(64),
+            source_digest,
         },
         target_language: "ru".into(),
         model,
         effort,
     };
+    let service = SubtitleService::new(&data)?;
+    let generation = service.begin_generation();
+    assert!(
+        service
+            .cached_window(&document, 2_000, &options, generation)?
+            .is_empty()
+    );
+    let translated = service
+        .translate_window(&document, 2_000, &options, generation, cancelled)
+        .await?
+        .ok_or("The fresh fixture did not run inference")?;
+    service.remember_selection(&translated.accepted[0].0, None, None, generation)?;
+    let accepted = service.cached_window(&document, 2_000, &options, generation)?;
+    assert_eq!(accepted.len(), document.fragments().len());
+    let output = service.output_path(generation, SubtitleFormat::Ass);
+    service.publish_window(&document, &accepted, &output, generation)?;
+    let rendered = std::fs::read_to_string(&output)?;
+    let rendered_document = SubtitleDocument::parse(&rendered, SubtitleFormat::Ass)?;
+    assert_eq!(
+        rendered_document.fragments().len(),
+        document.fragments().len()
+    );
+
+    let mut original_envelope = HashMap::new();
+    let mut translated_envelope = HashMap::new();
+    for (index, (original, translated)) in document
+        .fragments()
+        .iter()
+        .zip(rendered_document.fragments())
+        .enumerate()
+    {
+        assert_eq!(
+            (original.start_ms, original.end_ms),
+            (translated.start_ms, translated.end_ms)
+        );
+        assert!(
+            translated
+                .text
+                .chars()
+                .any(|character| ('А'..='я').contains(&character))
+        );
+        let marker = format!("fragment-{index}");
+        original_envelope.insert(original.id.clone(), marker.clone());
+        translated_envelope.insert(translated.id.clone(), marker);
+    }
+    assert_eq!(
+        document.render(&original_envelope)?,
+        rendered_document.render(&translated_envelope)?
+    );
+    assert!(
+        accepted
+            .values()
+            .any(|text| text.contains("Боб") || text.contains("Bob"))
+    );
+    assert!(
+        accepted
+            .values()
+            .any(|text| text.contains("Алис") || text.contains("Элис") || text.contains("Alice"))
+    );
+    std::fs::write(evidence.join("translated.ass"), &rendered)?;
+    drop(service);
+
+    let reopened = SubtitleService::new(&data)?;
+    let generation = reopened.begin_generation();
+    let (_sender, cancelled) = watch::channel(true);
+    for position_ms in [2_000, 62_000] {
+        let cached = reopened.cached_window(&document, position_ms, &options, generation)?;
+        assert!(!cached.is_empty());
+        assert!(
+            pending_batch(&document, position_ms, &cached)?
+                .fragments
+                .is_empty()
+        );
+        assert!(
+            reopened
+                .translate_window(
+                    &document,
+                    position_ms,
+                    &options,
+                    generation,
+                    cancelled.clone()
+                )
+                .await?
+                .is_none()
+        );
+        for (id, text) in cached {
+            assert_eq!(accepted.get(&id), Some(&text));
+        }
+    }
+    let receipt = serde_json::json!({
+        "media": media,
+        "mediaSha256": options.identity.media_digest,
+        "originalSha256": options.identity.source_digest,
+        "translatedSha256": format!("{:x}", Sha256::digest(rendered.as_bytes())),
+        "model": options.model,
+        "effort": options.effort,
+        "targetLanguage": options.target_language,
+        "accepted": translated.accepted.iter().map(|(key, text)| serde_json::json!({
+            "text": text,
+            "key": key,
+        })).collect::<Vec<_>>(),
+        "exactAssEnvelopeAndTiming": true,
+        "cacheAfterReopenAndSeek": true,
+        "noInferenceOnCacheHit": true,
+    });
+    std::fs::write(
+        evidence.join("live-subtitles.json"),
+        serde_json::to_vec_pretty(&receipt)?,
+    )?;
+    println!(
+        "subtitle-codex PASS: generated ASS translated to Russian; exact style/timing, names and reopen/seek cache"
+    );
+    Ok(())
+}
+
+async fn cached_codex_fixture(evidence: &Path) -> Result<()> {
+    let receipt: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(evidence.join("live-subtitles.json"))?)?;
+    let first = &receipt["accepted"][0];
+    let key: qplay_native::subtitles::SubtitleCacheKey =
+        serde_json::from_value(first["key"].clone())?;
+    let first_text = first["text"].as_str().ok_or("Missing accepted text")?;
+    let (document, source_digest) =
+        read_local_external(&evidence.join("original.ass"), SubtitleFormat::Ass).await?;
+    assert_eq!(source_digest, key.identity.source_digest);
+    let service = SubtitleService::new(&evidence.join("profile/data"))?;
+    let generation = service.begin_generation();
+    service.remember_selection(&key, None, None, generation)?;
+    let options = service
+        .cached_options(&key.identity, "ru", None, None, generation)?
+        .ok_or("Accepted automatic choice was not restored")?;
+    assert_eq!((&options.model, &options.effort), (&key.model, &key.effort));
+    assert!(
+        service
+            .cached_options(&key.identity, "en", None, None, generation)?
+            .is_none()
+    );
+    let mut other_media = key.identity.clone();
+    other_media.media_digest = "f".repeat(64);
+    assert!(
+        service
+            .cached_options(&other_media, "ru", None, None, generation)?
+            .is_none()
+    );
+    assert!(
+        service
+            .cached_options(&key.identity, "ru", Some("other-model"), None, generation)?
+            .is_none()
+    );
+    let other_options = service
+        .cached_options(
+            &key.identity,
+            "ru",
+            Some("other-model"),
+            Some("low"),
+            generation,
+        )?
+        .ok_or("Explicit choices must support local lookup")?;
+    assert!(
+        service
+            .cached_window(&document, 2_000, &other_options, generation)?
+            .is_empty()
+    );
+    let (_sender, cancelled) = watch::channel(true);
+    for position_ms in [2_000, 62_000] {
+        assert!(
+            service
+                .translate_window(
+                    &document,
+                    position_ms,
+                    &options,
+                    generation,
+                    cancelled.clone()
+                )
+                .await?
+                .is_none()
+        );
+    }
+    let accepted = service.cached_window(&document, 2_000, &options, generation)?;
+    assert_eq!(
+        document.render(&accepted)?,
+        std::fs::read_to_string(evidence.join("translated.ass"))?
+    );
+    service.begin_generation();
+    assert!(matches!(
+        service.cached_options(&key.identity, "ru", None, None, generation),
+        Err(SubtitleServiceError::Stale)
+    ));
+    assert!(matches!(
+        service.remember_selection(&key, None, None, generation),
+        Err(SubtitleServiceError::Stale)
+    ));
+    drop(service);
+
+    let partial_data = evidence.join("partial-profile/data");
+    let mut cache = SubtitleCache::new(&partial_data)?;
+    cache.accept(&key, first_text)?;
+    let service = SubtitleService::new(&partial_data)?;
+    let generation = service.begin_generation();
+    assert!(
+        service
+            .cached_options(&key.identity, "ru", None, None, generation)?
+            .is_none()
+    );
+    service.remember_selection(&key, None, None, generation)?;
+    let options = service
+        .cached_options(&key.identity, "ru", None, None, generation)?
+        .ok_or("Partial automatic choice was not restored")?;
+    let accepted = service.cached_window(&document, 2_000, &options, generation)?;
+    assert_eq!(accepted.len(), 1);
+    assert_eq!(
+        pending_batch(&document, 2_000, &accepted)?.fragments.len(),
+        2
+    );
     let (_sender, cancelled) = watch::channel(false);
-    let translated = qplay_native::subtitles::translate_batch(&batch, &options, cancelled).await?;
-    let accepted: HashMap<_, _> = translated
-        .accepted
-        .into_iter()
-        .map(|(key, text)| (key.fragment_id, text))
-        .collect();
-    assert_ne!(document.render(&accepted)?, document.original());
-    println!("subtitle-codex PASS: one generated cue translated");
+    assert!(matches!(
+        service
+            .translate_window(&document, 2_000, &options, generation, cancelled)
+            .await,
+        Err(SubtitleServiceError::Codex(
+            qbutt_codex::CodexError::Unavailable
+        ))
+    ));
+    assert_eq!(
+        service.cached_window(&document, 2_000, &options, generation)?,
+        accepted
+    );
+    let output = service.output_path(generation, SubtitleFormat::Ass);
+    service.publish_window(&document, &accepted, &output, generation)?;
+    let rendered = std::fs::read_to_string(output)?;
+    assert!(rendered.contains(first_text) && rendered.contains("Bob is waiting at the gate."));
+    std::fs::write(evidence.join("partial-translated.ass"), rendered)?;
+    std::fs::write(
+        evidence.join("offline-cache.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "automaticChoice": options.model,
+            "effort": options.effort,
+            "exactIdentityAndTarget": true,
+            "explicitChoiceLocalLookup": true,
+            "cacheOnlyReopenAndSeek": true,
+            "staleSelectionRejected": true,
+            "partialCacheRetainedAfterUnavailableCodex": true,
+            "partialAcceptedFragments": accepted.len(),
+            "partialOriginalFragments": 2,
+        }))?,
+    )?;
+    println!(
+        "subtitle-cache PASS: offline Auto/explicit, identity, reopen/seek, stale and partial cache"
+    );
     Ok(())
 }
