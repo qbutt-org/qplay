@@ -1,4 +1,6 @@
-use crate::archive::{extract_asset, obtain_asset, sha256};
+use crate::archive::{
+    discard_partial, extract_asset, obtain_asset, remaining_download_bytes, sha256,
+};
 use crate::catalog::{self, Asset, RUNTIME_VERSION};
 use crate::gpu_lock::{GpuLock, InstallerLock};
 use crate::model::{
@@ -23,6 +25,7 @@ const MANIFEST_SCHEMA_VERSION: u32 = 3;
 const MANIFEST_VERSION: u32 = 3;
 const REMOVAL_MARKER: &str = ".framegen-manager-removal.json";
 const GC_DIR: &str = "gc";
+const FREE_SPACE_RESERVE: u64 = 512 * 1024 * 1024;
 const TRT_COMMON_FILES: &[&str] = &[
     "nvinfer_10.dll",
     "nvinfer_builder_resource_ptx_10.dll",
@@ -479,9 +482,8 @@ where
     fs::create_dir_all(&versions)?;
     let staging_parent = root.join("staging");
     fs::create_dir_all(&staging_parent)?;
-    let staging = TempDir::new_in(&staging_parent)?;
-    let layout = staging.path().join("runtime");
-    fs::create_dir_all(&layout)?;
+    fs::create_dir_all(&cache)?;
+    validate_runtime_root(&root)?;
 
     let current_manifest_path = root.join(MANIFEST_NAME);
     let reusable = if current_manifest_path.is_file() {
@@ -499,9 +501,6 @@ where
         .map(validate_safe_runtime)
         .transpose()?
         .is_none_or(|problems| !problems.is_empty());
-    if let Some(manifest) = &reusable {
-        reuse_runtime(manifest, &layout, &models, gpu.backend)?;
-    }
     let assets = if repair || needs_repair {
         reusable
             .as_ref()
@@ -514,6 +513,13 @@ where
             reusable.as_ref().map(|runtime| &runtime.manifest),
         )
     };
+    ensure_install_space(&cache, &assets, &models, gpu.backend)?;
+    let staging = TempDir::new_in(&staging_parent)?;
+    let layout = staging.path().join("runtime");
+    fs::create_dir_all(&layout)?;
+    if let Some(manifest) = &reusable {
+        reuse_runtime(manifest, &layout, &models, gpu.backend)?;
+    }
     let repository = bundled_repository_root()?;
     let total_download = assets.iter().map(|asset| asset.download_bytes()).sum();
     let mut completed_download = 0_u64;
@@ -837,6 +843,39 @@ fn network_downloads(cache: &Path, assets: Vec<Asset>) -> Vec<Asset> {
                 && !cached_asset_is_valid(cache, *asset)
         })
         .collect()
+}
+
+fn ensure_install_space(
+    cache: &Path,
+    assets: &[Asset],
+    models: &[ModelId],
+    backend: RuntimeBackend,
+) -> Result<()> {
+    let download_growth = assets.iter().try_fold(0_u64, |total, asset| {
+        Ok::<_, anyhow::Error>(total.saturating_add(remaining_download_bytes(*asset, cache)?))
+    })?;
+    // A repair copies verified files into staging, even when their downloads are cached.
+    let staging_growth = selected_assets(models, backend)
+        .iter()
+        .map(|asset| asset.installed_bytes)
+        .sum::<u64>();
+    // Keep room for TensorRT engine compilation, manifests and ordinary playback.
+    let required = download_growth
+        .saturating_add(staging_growth)
+        .saturating_add(FREE_SPACE_RESERVE);
+    // Validated cache and staging directories are normal siblings on the same volume.
+    let available = platform::available_space(cache)?;
+    if available >= required {
+        return Ok(());
+    }
+    for asset in assets {
+        if matches!(asset.source, catalog::AssetSource::Network { .. }) {
+            discard_partial(*asset, cache)?;
+        }
+    }
+    bail!(
+        "Frame generation needs {required} free bytes for pinned downloads, staging and reserve; {available} bytes are available"
+    )
 }
 
 fn cached_asset_is_valid(cache: &Path, asset: Asset) -> bool {

@@ -9,6 +9,61 @@ use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
+pub fn remaining_download_bytes(asset: Asset, cache: &Path) -> Result<u64> {
+    let AssetSource::Network { bytes, .. } = asset.source else {
+        return Ok(0);
+    };
+    let destination = cache.join(asset.filename);
+    reject_reparse_file(&destination)?;
+    if destination.is_file() && sha256(&destination)? == asset.sha256 {
+        return Ok(0);
+    }
+    let partial = destination.with_extension("download.partial");
+    reject_reparse_file(&partial)?;
+    let downloaded = fs::metadata(&partial)
+        .map(|metadata| metadata.len())
+        .unwrap_or_default();
+    if downloaded > bytes || downloaded == bytes && sha256(&partial)? != asset.sha256 {
+        return Ok(bytes);
+    }
+    Ok(bytes - downloaded)
+}
+
+pub fn discard_partial(asset: Asset, cache: &Path) -> Result<()> {
+    let partial = cache
+        .join(asset.filename)
+        .with_extension("download.partial");
+    reject_reparse_file(&partial)?;
+    if !partial.exists() {
+        return Ok(());
+    }
+    let complete =
+        fs::metadata(&partial)?.len() == asset.source_bytes() && sha256(&partial)? == asset.sha256;
+    if !complete {
+        fs::remove_file(partial)?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn disk_full(error: &anyhow::Error) -> bool {
+    use windows_sys::Win32::Foundation::{ERROR_DISK_FULL, ERROR_HANDLE_DISK_FULL};
+
+    error.chain().any(|cause| {
+        cause.downcast_ref::<io::Error>().is_some_and(|io| {
+            matches!(
+                io.raw_os_error(),
+                Some(code) if code == ERROR_DISK_FULL as i32 || code == ERROR_HANDLE_DISK_FULL as i32
+            )
+        })
+    })
+}
+
+#[cfg(not(windows))]
+fn disk_full(_error: &anyhow::Error) -> bool {
+    false
+}
+
 pub fn obtain_asset<F>(
     asset: Asset,
     cache: &Path,
@@ -53,84 +108,90 @@ where
         fs::remove_file(&partial)?;
         downloaded = 0;
     }
-    let client = Client::builder()
-        .timeout(Duration::from_secs(7_200))
-        .user_agent("qplay-framegen-manager/0.1")
-        .build()?;
-    let mut request = client.get(url);
-    if downloaded > 0 {
-        request = request.header(RANGE, format!("bytes={downloaded}-"));
-    }
-    let mut response = request
-        .send()
-        .with_context(|| format!("failed to download {}", asset.label))?;
-    let append = downloaded > 0 && response.status() == StatusCode::PARTIAL_CONTENT;
-    if append {
-        let expected_prefix = format!("bytes {downloaded}-");
-        let content_range = response
-            .headers()
-            .get(CONTENT_RANGE)
-            .and_then(|value| value.to_str().ok())
-            .context("resumed download returned no Content-Range")?;
-        if !content_range.starts_with(&expected_prefix) {
-            bail!("{} returned an incompatible resume range", asset.label)
+    let result = (|| -> Result<PathBuf> {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(7_200))
+            .user_agent("qplay-framegen-manager/0.1")
+            .build()?;
+        let mut request = client.get(url);
+        if downloaded > 0 {
+            request = request.header(RANGE, format!("bytes={downloaded}-"));
         }
-    } else {
-        response = response.error_for_status()?;
-        downloaded = 0;
-    }
-    let expected_response = download_bytes.saturating_sub(downloaded);
-    if let Some(length) = response.content_length()
-        && length != expected_response
-    {
-        bail!(
-            "{} returned {} bytes; expected {}",
-            asset.label,
-            length,
-            expected_response
-        )
-    }
-    let file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .append(append)
-        .truncate(!append)
-        .open(&partial)?;
-    let mut output = BufWriter::new(file);
-    progress(downloaded, download_bytes);
-    let mut buffer = vec![0_u8; 4 * 1024 * 1024];
-    loop {
-        let count = response.read(&mut buffer)?;
-        if count == 0 {
-            break;
+        let mut response = request
+            .send()
+            .with_context(|| format!("failed to download {}", asset.label))?;
+        let append = downloaded > 0 && response.status() == StatusCode::PARTIAL_CONTENT;
+        if append {
+            let expected_prefix = format!("bytes {downloaded}-");
+            let content_range = response
+                .headers()
+                .get(CONTENT_RANGE)
+                .and_then(|value| value.to_str().ok())
+                .context("resumed download returned no Content-Range")?;
+            if !content_range.starts_with(&expected_prefix) {
+                bail!("{} returned an incompatible resume range", asset.label)
+            }
+        } else {
+            response = response.error_for_status()?;
+            downloaded = 0;
         }
-        output.write_all(&buffer[..count])?;
-        downloaded = downloaded.saturating_add(count as u64);
-        if downloaded > download_bytes {
-            drop(output);
-            fs::remove_file(&partial).ok();
-            bail!("{} exceeded its pinned download size", asset.label)
+        let expected_response = download_bytes.saturating_sub(downloaded);
+        if let Some(length) = response.content_length()
+            && length != expected_response
+        {
+            bail!(
+                "{} returned {} bytes; expected {}",
+                asset.label,
+                length,
+                expected_response
+            )
         }
+        let file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .append(append)
+            .truncate(!append)
+            .open(&partial)?;
+        let mut output = BufWriter::new(file);
         progress(downloaded, download_bytes);
+        let mut buffer = vec![0_u8; 4 * 1024 * 1024];
+        loop {
+            let count = response.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            output.write_all(&buffer[..count])?;
+            downloaded = downloaded.saturating_add(count as u64);
+            if downloaded > download_bytes {
+                drop(output);
+                fs::remove_file(&partial).ok();
+                bail!("{} exceeded its pinned download size", asset.label)
+            }
+            progress(downloaded, download_bytes);
+        }
+        output.flush()?;
+        output.get_ref().sync_all()?;
+        drop(output);
+        if downloaded != download_bytes {
+            bail!(
+                "{} download is incomplete ({downloaded}/{}) and can be resumed",
+                asset.label,
+                download_bytes
+            )
+        }
+        let actual = sha256(&partial)?;
+        if actual != asset.sha256 {
+            fs::remove_file(&partial).ok();
+            bail!("{} failed SHA-256 verification", asset.label)
+        }
+        progress(download_bytes, download_bytes);
+        fs::rename(&partial, &destination)?;
+        Ok(destination)
+    })();
+    if result.as_ref().is_err_and(disk_full) {
+        discard_partial(asset, cache)?;
     }
-    output.flush()?;
-    output.get_ref().sync_all()?;
-    drop(output);
-    if downloaded != download_bytes {
-        bail!(
-            "{} download is incomplete ({downloaded}/{}) and can be resumed",
-            asset.label,
-            download_bytes
-        )
-    }
-    let actual = sha256(&partial)?;
-    if actual != asset.sha256 {
-        fs::remove_file(&partial).ok();
-        bail!("{} failed SHA-256 verification", asset.label)
-    }
-    progress(download_bytes, download_bytes);
-    fs::rename(&partial, &destination)?;
-    Ok(destination)
+    result
 }
 
 fn obtain_bundled_asset<F>(asset: Asset, repository: &Path, mut progress: F) -> Result<PathBuf>

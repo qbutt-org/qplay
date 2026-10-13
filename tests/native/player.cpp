@@ -839,6 +839,36 @@ int main(int argc, char *argv[])
 
             backend.stop();
             wait([&] { return !backend.mediaLoaded() && backend.position() == 0 && backend.duration() == 0; }, "Stopping actual mpv playback failed");
+            if (qEnvironmentVariableIsSet("QPLAY_NATIVE_FRAMEGEN_DISK_QA"))
+            {
+                backend.changeSpeed(1);
+                backend.changeShader(QStringLiteral("auto"));
+                backend.changeContent(QStringLiteral("movie"));
+                backend.changeFramegen(QStringLiteral("on"));
+                backend.openMedia(secondMedia);
+                wait([&] { return backend.mediaLoaded() && backend.position() > 0.5; },
+                    "Baseline video did not load while frame generation was preparing");
+                wait([&] { return backend.framegenStatus() == QStringLiteral("unavailable"); },
+                    "Insufficient disk space did not disable frame generation");
+                evidence[QStringLiteral("framegenError")] = backend.gpuError();
+                require(!backend.gpuError().isEmpty(),
+                    "Frame generation did not report a preparation failure");
+                const double start = backend.position();
+                const QImage firstFrame = target.toImage().copy(0, 88, 1280, 500);
+                wait([&] { return backend.position() >= start + 1.5; },
+                    "Baseline playback stopped after frame generation failed");
+                require(target.toImage().copy(0, 88, 1280, 500) != firstFrame,
+                    "Baseline video stopped rendering after frame generation failed");
+                require(backend.framegenObservation().filter_name.empty(),
+                    "Failed frame generation attached a video filter");
+                require(target.toImage().save(evidencePrefix + QStringLiteral(".framegen-disk.png")),
+                    "Save baseline playback after frame generation failure failed");
+                evidence[QStringLiteral("framegenDiskFallback")] = true;
+                backend.changeFramegen(QStringLiteral("off"));
+                backend.stop();
+                wait([&] { return !backend.mediaLoaded(); },
+                    "Stopping baseline playback after frame generation failure failed");
+            }
             if (qEnvironmentVariableIsSet("QPLAY_NATIVE_FRAMEGEN_ACCEPTANCE"))
             {
                 const auto waitGpu = [&](const auto &condition, qint64 timeout, const char *message)

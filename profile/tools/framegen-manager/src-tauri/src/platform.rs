@@ -6,6 +6,36 @@ use std::path::PathBuf;
 use std::process::Command;
 
 #[cfg(windows)]
+pub fn available_space(path: &std::path::Path) -> Result<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+
+    let wide = path
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let mut available = 0_u64;
+    let ok = unsafe {
+        GetDiskFreeSpaceExW(
+            wide.as_ptr(),
+            &mut available,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    if ok == 0 {
+        return Err(std::io::Error::last_os_error()).context("read available disk space");
+    }
+    Ok(available)
+}
+
+#[cfg(not(windows))]
+pub fn available_space(_path: &std::path::Path) -> Result<u64> {
+    Ok(u64::MAX)
+}
+
+#[cfg(windows)]
 fn hide_console(command: &mut Command) {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
