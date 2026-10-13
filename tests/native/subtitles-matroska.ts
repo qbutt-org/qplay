@@ -3,25 +3,34 @@ import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 
 const [fixtureExecutable, ffmpegFile, mkvmergeFile, srtFile, vttFile, evidenceFile, qtDirectory,
-    nativeExecutable, runtimeLibrary, nativeFile, evidenceDirectory, cancelExecutable] = Bun.argv.slice(2);
+    nativeExecutable, runtimeLibrary, nativeFile, evidenceDirectory, cancelExecutable,
+    nativeVttFile, nativeSsaFile] = Bun.argv.slice(2);
 if (!fixtureExecutable || !ffmpegFile || !mkvmergeFile || !srtFile || !vttFile || !evidenceFile || !qtDirectory) {
-    throw new Error("Usage: bun tests/native/subtitles-matroska.ts <fixture.exe> <ffmpeg.mkv> <mkvmerge.mkv> <srt.mkv> <vtt.mkv> <evidence.json> <Qt SDK> [native.exe runtime-library native.mkv evidence-directory cancel.exe]");
+    throw new Error("Usage: bun tests/native/subtitles-matroska.ts <fixture.exe> <ffmpeg.mkv> <mkvmerge.mkv> <srt.mkv> <vtt.mkv> <evidence.json> <Qt SDK> [native.exe runtime-library native-ass.mkv evidence-directory cancel.exe native-vtt.mkv native-ssa.mkv]");
 }
-if ([nativeExecutable, runtimeLibrary, nativeFile, evidenceDirectory].some(Boolean)
-    && ![nativeExecutable, runtimeLibrary, nativeFile, evidenceDirectory].every(Boolean)) {
-    throw new Error("Native acceptance requires its executable, library, media, Qt SDK and evidence directory");
+if ([nativeExecutable, runtimeLibrary, nativeFile, evidenceDirectory, nativeVttFile, nativeSsaFile].some(Boolean)
+    && ![nativeExecutable, runtimeLibrary, nativeFile, evidenceDirectory, nativeVttFile, nativeSsaFile].every(Boolean)) {
+    throw new Error("Native acceptance requires its executable, library, three Matroska media files, Qt SDK and evidence directory");
 }
 const fixtureEnvironment = {
     ...process.env,
     Path: `${resolve(qtDirectory, "bin")};${process.env.Path ?? process.env.PATH ?? ""}`,
 };
 
-const fixtureFiles = [
+const nativeFixtures = nativeFile && nativeVttFile && nativeSsaFile ? [
+    { name: "native-ass.mkv", path: nativeFile, codec: "ass", format: "ass" },
+    { name: "native-vtt.mkv", path: nativeVttFile, codec: "webvtt", format: "vtt" },
+    { name: "native-ssa.mkv", path: nativeSsaFile, codec: "ssa", format: "ssa" },
+] : [];
+const extractionFixtures = [
     { name: "ffmpeg.mkv", path: ffmpegFile, track: 2, codec: "ass" },
     { name: "mkvmerge.mkv", path: mkvmergeFile, track: 2, codec: "ass" },
     { name: "srt.mkv", path: srtFile, track: 2, codec: "subrip" },
     { name: "vtt.mkv", path: vttFile, track: 3, codec: "webvtt" },
-    ...(nativeFile ? [{ name: "native.mkv", path: nativeFile, track: 3, codec: "ass" }] : []),
+];
+const fixtureFiles = [
+    ...extractionFixtures,
+    ...nativeFixtures.map(item => ({ ...item, track: 3 })),
 ];
 const media = new Map(await Promise.all(fixtureFiles.map(async item => [item.name, await readFile(resolve(item.path))] as const)));
 const requests: { name: string; query: string; method: string; range: string | null; bytes: number; authorization: boolean; cookie: boolean; ifMatch: boolean }[] = [];
@@ -118,9 +127,9 @@ const server = Bun.serve({
 });
 
 const cases = [];
-let nativeEvidence;
+const nativeEvidence = [];
 try {
-    for (const item of fixtureFiles.filter(item => item.name !== "native.mkv")) {
+    for (const item of extractionFixtures) {
         const name = item.name;
         const url = new URL(`media/0123456789abcdef0123456789abcdef/${name}`, server.url).href;
         const child = Bun.spawn([resolve(fixtureExecutable), url, String(item.track), "Second cue", item.codec], {
@@ -157,37 +166,40 @@ try {
             await Bun.sleep(50);
         cases.push({ name: "pending-cancel", exitCode: cancelResult[2], stdout: cancelResult[0].trim(), stderr: cancelResult[1].trim() });
     }
-    if (nativeExecutable && runtimeLibrary && nativeFile && evidenceDirectory) {
-        const profile = join(resolve(evidenceDirectory), `embedded-profile-${randomUUID()}`);
-        const prefix = join(resolve(evidenceDirectory), "embedded-player");
-        await mkdir(profile, { recursive: true });
-        const url = new URL("media/0123456789abcdef0123456789abcdef/native.mkv", server.url).href;
-        const seed = Bun.spawn([resolve(fixtureExecutable), url, "3", "Second cue", "ass", "12000", "19000", profile], {
-            stdout: "pipe", stderr: "pipe", windowsHide: true,
-            env: fixtureEnvironment,
-        });
-        const seedOutput = await Promise.all([new Response(seed.stdout).text(), new Response(seed.stderr).text(), seed.exited]);
-        if (seedOutput[2] !== 0)
-            throw new Error(`Embedded cache seed failed: ${seedOutput[1]}`);
-        const native = Bun.spawn([resolve(nativeExecutable), resolve(runtimeLibrary), url, resolve(nativeFile), profile, prefix], {
-            stdout: "pipe", stderr: "pipe", windowsHide: true,
-            env: {
-                ...fixtureEnvironment,
-                QT_PLUGIN_PATH: resolve(qtDirectory, "plugins"),
-                QML_IMPORT_PATH: resolve(qtDirectory, "qml"),
-                QT_COMMAND_LINE_PARSER_NO_GUI_MESSAGE_BOXES: "1",
-                QPLAY_SUBTITLE_MKV_QA: "1",
-            },
-        });
-        const timeout = setTimeout(() => native.kill(), 60_000);
-        const [stdout, stderr, exitCode] = await Promise.all([
-            new Response(native.stdout).text(), new Response(native.stderr).text(), native.exited,
-        ]).finally(() => clearTimeout(timeout));
-        nativeEvidence = { exitCode, stdout, stderr, profile, prefix };
-        await writeFile(`${prefix}.log`, stdout + stderr);
-        if (exitCode !== 0)
-            throw new Error(`Embedded native acceptance failed: ${stderr}`);
-        nativeEvidence = { ...nativeEvidence, result: await Bun.file(`${prefix}.json`).json() };
+    if (nativeExecutable && runtimeLibrary && evidenceDirectory) {
+        for (const item of nativeFixtures) {
+            const profile = join(resolve(evidenceDirectory), `embedded-profile-${randomUUID()}`);
+            const prefix = join(resolve(evidenceDirectory), `embedded-player-${item.format}`);
+            await mkdir(profile, { recursive: true });
+            const url = new URL(`media/0123456789abcdef0123456789abcdef/${item.name}`, server.url).href;
+            const seed = Bun.spawn([resolve(fixtureExecutable), url, "3", "Second cue", item.codec, "12000", "19000", profile], {
+                stdout: "pipe", stderr: "pipe", windowsHide: true,
+                env: fixtureEnvironment,
+            });
+            const seedOutput = await Promise.all([new Response(seed.stdout).text(), new Response(seed.stderr).text(), seed.exited]);
+            if (seedOutput[2] !== 0)
+                throw new Error(`Embedded ${item.format} cache seed failed: ${seedOutput[1]}`);
+
+            const native = Bun.spawn([resolve(nativeExecutable), resolve(runtimeLibrary), url, resolve(item.path), profile, prefix], {
+                stdout: "pipe", stderr: "pipe", windowsHide: true,
+                env: {
+                    ...fixtureEnvironment,
+                    QT_PLUGIN_PATH: resolve(qtDirectory, "plugins"),
+                    QML_IMPORT_PATH: resolve(qtDirectory, "qml"),
+                    QT_COMMAND_LINE_PARSER_NO_GUI_MESSAGE_BOXES: "1",
+                    QPLAY_SUBTITLE_MKV_QA: item.format,
+                },
+            });
+            const timeout = setTimeout(() => native.kill(), 60_000);
+            const [stdout, stderr, exitCode] = await Promise.all([
+                new Response(native.stdout).text(), new Response(native.stderr).text(), native.exited,
+            ]).finally(() => clearTimeout(timeout));
+            await writeFile(`${prefix}.log`, stdout + stderr);
+            if (exitCode !== 0)
+                throw new Error(`Embedded ${item.format} native acceptance failed: ${stderr}`);
+            nativeEvidence.push({ format: item.format, exitCode, stdout, stderr, profile, prefix,
+                result: await Bun.file(`${prefix}.json`).json() });
+        }
     }
 } finally {
     server.stop(true);

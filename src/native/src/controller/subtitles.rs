@@ -35,7 +35,6 @@ struct WindowTask {
     demuxer: String,
     origin_ms: i64,
     position_ms: i64,
-    output: PathBuf,
     preferences: SubtitleTranslationPreferences,
     cancelled: watch::Receiver<bool>,
 }
@@ -203,14 +202,15 @@ async fn translate_window(
         }
     }
     if !accepted.is_empty() {
+        let format = document.format;
+        let output = task.service.output_path(task.generation, format);
         task.service
-            .publish_window(&document, &accepted, &task.output, task.generation)
+            .publish_window(&document, &accepted, &output, task.generation)
             .map_err(|_| "failed")?;
         let generation = task.generation;
-        let output = task.output;
         let _ = thread.queue(move |mut player| {
             if player.subtitle_task_generation == generation && player.subtitle_translation_view {
-                player.as_mut().present_subtitle_output(&output);
+                player.as_mut().present_subtitle_output(&output, format);
             }
         });
     }
@@ -491,18 +491,10 @@ impl ffi::PlayerController {
                 .dispatch_subtitle(&["sub-remove", &id.to_string()]);
             self.as_mut().rust_mut().subtitle_output_id = None;
         }
+        self.as_mut().rust_mut().subtitle_output_path = None;
+        self.as_mut().rust_mut().subtitle_output_plain = false;
         let (cancel, cancelled) = watch::channel(false);
         let generation = self.subtitle_task_generation;
-        let format = match track.external {
-            true => external_format(track.external_filename.as_deref().unwrap_or(""))
-                .unwrap_or(SubtitleFormat::Ass),
-            false if matches!(track.codec.to_ascii_lowercase().as_str(), "ass" | "ssa") => {
-                SubtitleFormat::Ass
-            }
-            false => SubtitleFormat::Srt,
-        };
-        let plain = matches!(format, SubtitleFormat::Srt | SubtitleFormat::Vtt);
-        let output = service.output_path(generation, format);
         let task = WindowTask {
             service,
             generation,
@@ -517,15 +509,12 @@ impl ffi::PlayerController {
                 .filter(|value| value.is_finite())
                 .map_or(0, |value| (value * 1000.0).round() as i64),
             position_ms,
-            output: output.clone(),
             preferences: self.subtitle_translation.clone(),
             cancelled,
         };
         let mut state = self.as_mut().rust_mut();
         state.subtitle_task_cancel = Some(cancel);
         state.subtitle_window_start_ms = Some(start);
-        state.subtitle_output_path = Some(output);
-        state.subtitle_output_plain = plain;
         state.subtitle_status = "working".into();
         ffi::start_subtitle_task(Box::new(SubtitleTask {
             thread: Box::new(self.qt_thread()),
@@ -534,9 +523,16 @@ impl ffi::PlayerController {
         self.as_mut().state_changed();
     }
 
-    pub(super) fn present_subtitle_output(mut self: Pin<&mut Self>, output: &Path) {
+    pub(super) fn present_subtitle_output(
+        mut self: Pin<&mut Self>,
+        output: &Path,
+        format: SubtitleFormat,
+    ) {
         let path = output.to_string_lossy();
-        self.as_mut().rust_mut().subtitle_status = "working".into();
+        let mut state = self.as_mut().rust_mut();
+        state.subtitle_output_path = Some(output.to_path_buf());
+        state.subtitle_output_plain = matches!(format, SubtitleFormat::Srt | SubtitleFormat::Vtt);
+        state.subtitle_status = "working".into();
         self.as_mut()
             .dispatch_subtitle(&["sub-add", &path, "select"]);
         self.as_mut().state_changed();

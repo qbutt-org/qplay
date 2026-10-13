@@ -143,7 +143,8 @@ int main(int argc, char *argv[])
     int exitCode = 0;
     bool pendingCatalogCancellation = false;
     const QString networkSubtitle = qEnvironmentVariable("QPLAY_SUBTITLE_HTTP_QA");
-    const bool embeddedNetworkQa = qEnvironmentVariableIsSet("QPLAY_SUBTITLE_MKV_QA");
+    const QString embeddedFormat = qEnvironmentVariable("QPLAY_SUBTITLE_MKV_QA");
+    const bool embeddedNetworkQa = !embeddedFormat.isEmpty();
 
     try
     {
@@ -324,7 +325,9 @@ int main(int argc, char *argv[])
                     "Embedded subtitle efforts did not arrive");
                 backend.changeSubtitleEffort(backend.subtitleEfforts().first());
                 backend.changeSubtitleTarget(QStringLiteral("ru"));
-                const QRect captionArea(140, 100, 1000, 150);
+                const QRect captionArea = embeddedFormat == QStringLiteral("vtt")
+                    ? QRect(250, 470, 800, 130)
+                    : QRect(140, 100, 1000, 150);
                 auto original = target.toImage().copy(captionArea);
                 QElapsedTimer originalWait;
                 originalWait.start();
@@ -349,17 +352,24 @@ int main(int argc, char *argv[])
                         .arg(backend.subtitleTranslationActive()).toStdString());
                 }
                 QDirIterator outputs(QDir(profile).absoluteFilePath(QStringLiteral("subtitle-session")),
-                    {QStringLiteral("*.ass")}, QDir::Files, QDirIterator::Subdirectories);
+                    {QStringLiteral("*.") + embeddedFormat}, QDir::Files, QDirIterator::Subdirectories);
                 bool translated = false;
                 while (outputs.hasNext())
                 {
                     QFile output(outputs.next());
                     require(output.open(QIODevice::ReadOnly), "Read generated embedded subtitle failed");
                     const auto content = output.readAll();
-                    translated |= content.contains("Style: Default,Arial,20")
-                        && content.contains("{\\an8}{\\pos(160,35)}Cached embedded translation");
+                    const bool stylePreserved = embeddedFormat == QStringLiteral("vtt")
+                        ? content.contains("::cue(.bright) { color: yellow; }")
+                            && content.contains("line:20% position:40% align:start")
+                            && content.contains("<00:00:02.000>")
+                        : content.contains("Style: Default,Arial,20");
+                    const bool authoredPositionPreserved = embeddedFormat != QStringLiteral("ass")
+                        || content.contains("{\\an8}{\\pos(160,35)}Cached embedded translation");
+                    translated |= stylePreserved && authoredPositionPreserved
+                        && content.contains("Cached embedded translation");
                 }
-                require(translated, "Embedded translation lost accepted text or ASS style");
+                require(translated, "Embedded translation lost accepted text or authored style");
                 auto translatedFrame = target.toImage();
                 auto translatedCaption = translatedFrame.copy(captionArea);
                 QElapsedTimer pixelWait;
@@ -385,6 +395,7 @@ int main(int argc, char *argv[])
                 require(children == 0, "Remote embedded translation spawned a child runtime");
                 evidence = {
                     {QStringLiteral("remoteEmbeddedTranslation"), true},
+                    {QStringLiteral("format"), embeddedFormat},
                     {QStringLiteral("selectedSubtitle"), subtitleId},
                     {QStringLiteral("cacheStyleOriginal"), translated},
                     {QStringLiteral("gpuPixelsChanged"), translatedCaption != original},

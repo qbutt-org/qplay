@@ -13,7 +13,7 @@ async fn main() {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     if args.len() != 4 && args.len() != 6 && args.len() != 7 {
         eprintln!(
-            "Usage: subtitles-matroska-fixture <URL> <TrackNumber> <Expected text> <ass|subrip|webvtt> [start-ms end-ms [profile]]"
+            "Usage: subtitles-matroska-fixture <URL> <TrackNumber> <Expected text> <ass|ssa|subrip|webvtt> [start-ms end-ms [profile]]"
         );
         std::process::exit(2);
     }
@@ -49,6 +49,10 @@ async fn main() {
     assert!(document.original().contains(&args[2]));
     match args[3].as_str() {
         "ass" => assert!(document.original().contains("Style: Default,Arial,20")),
+        "ssa" => {
+            assert!(document.original().contains("Style: Default,Arial,20"));
+            assert!(document.original().contains("Format: Marked, Start, End"));
+        }
         "webvtt" => {
             assert!(
                 document
