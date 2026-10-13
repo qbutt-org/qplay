@@ -86,8 +86,8 @@ Root: HKA; Subkey: "Software\Microsoft\Windows\CurrentVersion\App Paths\qplay.ex
 Root: HKA; Subkey: "Software\Classes\qplay.Video"; ValueType: string; ValueName: ""; ValueData: "qplay media"; Flags: uninsdeletekey
 Root: HKA; Subkey: "Software\Classes\qplay.Video\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: """{app}\qplay.exe"",0"
 Root: HKA; Subkey: "Software\Classes\qplay.Video\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\qplay.exe"" -- ""%1"""
-Root: HKA; Subkey: "Software\Classes\Applications\qplay.exe\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\qplay.exe"" -- ""%1"""; Flags: uninsdeletekey
-Root: HKA; Subkey: "Software\Classes\Applications\qplay.exe"; ValueType: string; ValueName: "FriendlyAppName"; ValueData: "qplay"
+Root: HKA; Subkey: "Software\Classes\Applications\qplay.exe\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\qplay.exe"" -- ""%1"""
+Root: HKA; Subkey: "Software\Classes\Applications\qplay.exe"; ValueType: string; ValueName: "FriendlyAppName"; ValueData: "qplay"; Flags: uninsdeletekey
 Root: HKA; Subkey: "Software\qbutt-org\qplay\Capabilities"; ValueType: string; ValueName: "ApplicationName"; ValueData: "qplay"
 Root: HKA; Subkey: "Software\qbutt-org\qplay\Capabilities"; ValueType: string; ValueName: "ApplicationDescription"; ValueData: "qplay media player"
 Root: HKA; Subkey: "Software\RegisteredApplications"; ValueType: string; ValueName: "qplay"; ValueData: "Software\qbutt-org\qplay\Capabilities"; Flags: uninsdeletevalue
