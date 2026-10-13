@@ -3,6 +3,13 @@
   "qt": {
     "version": "6.12.0"
   },
+  "matroskaDemuxer": {
+    "version": "0.8.1",
+    "source": "https://github.com/hasenbanck/matroska-demuxer/tree/e038e97b659ec2750b045a5f7a42e60b73c9491f",
+    "crateSha256": "4cbf36668475a45a46bf8710e927e7458b7c387e7c46ddb5457ae0c71cf5e817",
+    "path": "src/native/vendor/matroska-demuxer",
+    "patch": "src/native/vendor/matroska-demuxer/qplay.patch"
+  },
   "nativeProfile": {
     "framegenManager": {
       "path": "profile/tools/bin/framegen-manager.exe",

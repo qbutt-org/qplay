@@ -1,0 +1,82 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 8ece7eb..38040f5 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -66,0 +67,11 @@ type Result<T> = std::result::Result<T, DemuxError>;
++pub(crate) const MAX_METADATA_BYTES: u64 = 8 * 1024 * 1024;
++const MAX_FRAME_BYTES: u64 = 32 * 1024 * 1024;
++pub(crate) const MAX_COLLECTION_ENTRIES: usize = 65_536;
++
++pub(crate) fn checked_allocation_size(size: u64, limit: u64) -> Result<usize> {
++    if size > limit {
++        return Err(DemuxError::ResourceLimitExceeded { declared: size, limit });
++    }
++    Ok(usize::try_from(size)?)
++}
++
+@@ -1668 +1679 @@ impl<R: Read + Seek> MatroskaFile<R> {
+-            let size: usize = queued_frame.size.try_into()?;
++            let size = checked_allocation_size(queued_frame.size, MAX_FRAME_BYTES)?;
+diff --git a/src/ebml.rs b/src/ebml.rs
+index b34ea3b..99f63eb 100644
+--- a/src/ebml.rs
++++ b/src/ebml.rs
+@@ -4 +4 @@ use std::{
+-    convert::{TryFrom, TryInto},
++    convert::TryFrom,
+@@ -10,0 +11 @@ use crate::{
++    checked_allocation_size,
+@@ -12 +13 @@ use crate::{
+-    DemuxError, Result,
++    DemuxError, Result, MAX_COLLECTION_ENTRIES, MAX_METADATA_BYTES,
+@@ -63,0 +65,5 @@ pub(crate) fn collect_children<R: Read + Seek>(
++    checked_allocation_size(
++        if size == u64::MAX { available } else { size },
++        MAX_METADATA_BYTES,
++    )?;
++
+@@ -87,0 +94,6 @@ pub(crate) fn collect_children<R: Read + Seek>(
++            if children.len() >= MAX_COLLECTION_ENTRIES {
++                return Err(DemuxError::ResourceLimitExceeded {
++                    declared: u64::try_from(children.len())? + 1,
++                    limit: u64::try_from(MAX_COLLECTION_ENTRIES)?,
++                });
++            }
+@@ -143,0 +156,5 @@ where
++    let limit = if child_id == ElementId::TrackEntry {
++        512
++    } else {
++        MAX_COLLECTION_ENTRIES
++    };
+@@ -145,0 +163,6 @@ where
++            if children.len() >= limit {
++                return Err(DemuxError::ResourceLimitExceeded {
++                    declared: u64::try_from(children.len())? + 1,
++                    limit: u64::try_from(limit)?,
++                });
++            }
+@@ -402 +425 @@ pub(crate) fn try_find_binary<R: Read + Seek>(
+-            let size = usize::try_from(*size)?;
++            let size = checked_allocation_size(*size, MAX_METADATA_BYTES)?;
+@@ -641 +664 @@ fn parse_string<R: Read + Seek>(r: &mut R, size: u64) -> Result<String> {
+-    let size: usize = size.try_into()?;
++    let size = checked_allocation_size(size, MAX_METADATA_BYTES)?;
+diff --git a/src/error.rs b/src/error.rs
+index 90a5e71..bf6cc8d 100644
+--- a/src/error.rs
++++ b/src/error.rs
+@@ -52,0 +53,7 @@ pub enum DemuxError {
++    /// Metadata, a frame, or a collection exceeded its acquisition limit.
++    ResourceLimitExceeded {
++        /// The number of requested bytes or collection entries.
++        declared: u64,
++        /// The maximum permitted bytes or collection entries.
++        limit: u64,
++    },
+@@ -148,0 +156,6 @@ impl std::fmt::Display for DemuxError {
++            DemuxError::ResourceLimitExceeded { declared, limit } => {
++                write!(
++                    f,
++                    "resource size {declared} exceeds acquisition limit {limit}"
++                )
++            }
