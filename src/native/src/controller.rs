@@ -18,6 +18,7 @@ use crate::track_model;
 use crate::yt_dlp;
 
 mod actions;
+mod downloads;
 mod events;
 mod gpu;
 mod startup;
@@ -73,6 +74,12 @@ pub mod ffi {
         fn startUpdateTask(task: Box<UpdateTask>);
         #[rust_name = "start_subtitle_task"]
         fn startSubtitleTask(task: Box<SubtitleTask>);
+        #[rust_name = "schedule_download_timeout"]
+        fn scheduleDownloadTimeout(
+            player: Pin<&mut PlayerController>,
+            token: &QString,
+            milliseconds: i32,
+        );
     }
 
     extern "Rust" {
@@ -124,6 +131,7 @@ pub mod ffi {
         #[qproperty(QStringList, subtitle_models, cxx_name = "subtitleModels", READ = subtitle_models, NOTIFY = state_changed)]
         #[qproperty(QStringList, subtitle_efforts, cxx_name = "subtitleEfforts", READ = subtitle_efforts, NOTIFY = state_changed)]
         #[qproperty(QString, subtitle_status, cxx_name = "subtitleStatus", READ = subtitle_status, NOTIFY = state_changed)]
+        #[qproperty(QString, download_state, cxx_name = "downloadState", READ = download_state, NOTIFY = state_changed)]
         #[qproperty(QString, language, READ = language, NOTIFY = state_changed)]
         #[qproperty(QString, appearance, READ = appearance, NOTIFY = state_changed)]
         #[qproperty(QString, settings_error, cxx_name = "settingsError", READ = settings_error, NOTIFY = state_changed)]
@@ -192,6 +200,13 @@ pub mod ffi {
         fn subtitle_efforts(&self) -> QStringList;
         #[cxx_name = "subtitleStatus"]
         fn subtitle_status(&self) -> QString;
+        #[cxx_name = "downloadState"]
+        fn download_state(&self) -> QString;
+        #[qinvokable]
+        #[cxx_name = "requestDownload"]
+        fn request_download(self: Pin<&mut Self>);
+        #[cxx_name = "downloadTimeout"]
+        fn download_timeout(self: Pin<&mut Self>, token: &QString);
         fn language(&self) -> QString;
         fn appearance(&self) -> QString;
         #[cxx_name = "settingsError"]
@@ -369,6 +384,7 @@ pub struct PlayerControllerRust {
     generation: u64,
     media: Option<String>,
     observed_path: String,
+    download: Option<downloads::DownloadAction>,
     pending_commands: HashSet<u64>,
     subtitle_commands: HashMap<u64, u64>,
     gpu_commands: HashMap<u64, gpu::GpuCommand>,
@@ -440,6 +456,7 @@ impl Default for PlayerControllerRust {
             generation: 0,
             media: None,
             observed_path: String::new(),
+            download: None,
             pending_commands: HashSet::new(),
             subtitle_commands: HashMap::new(),
             gpu_commands: HashMap::new(),

@@ -49,6 +49,7 @@ impl ffi::PlayerController {
                 state.gpu.interlaced_seen = false;
                 state.gpu.video_signature = None;
                 state.media = Some(media);
+                state.download = None;
                 state.subtitle_media = None;
                 state.online_progress = -1;
                 state.file_loaded = false;

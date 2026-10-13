@@ -8,7 +8,7 @@ project(qplay_native
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 6.12 REQUIRED COMPONENTS Quick QuickControls2 QuickDialogs2 OpenGL)
+find_package(Qt6 6.12 REQUIRED COMPONENTS Quick QuickControls2 QuickDialogs2 OpenGL Network)
 qt_standard_project_setup(REQUIRES 6.12)
 
 include(FetchContent)
@@ -55,6 +55,7 @@ qt_add_qml_module(qplay_views
         assets/icons/rewind-backward-10.svg
         assets/icons/rewind-forward-10.svg
         assets/icons/check.svg
+        assets/icons/download.svg
         assets/icons/chevron-down-dark.svg
         assets/icons/chevron-down.svg
         assets/icons/chevron-left.svg
@@ -91,7 +92,11 @@ target_link_libraries(qplay-native
     PRIVATE qplay_views qplay_viewsplugin qplay_native qplay_player_plugin Qt::QuickDialogs2 bcrypt
 )
 
-qt_add_executable(qplay-native-acceptance WIN32 tests/native/player.cpp)
+qt_add_executable(qplay-native-acceptance WIN32
+    tests/native/player.cpp
+    tests/native/downloads.cpp
+    tests/native/downloads.h
+)
 target_link_libraries(qplay-native-acceptance
-    PRIVATE qplay_views qplay_viewsplugin qplay_native qplay_player_plugin bcrypt
+    PRIVATE qplay_views qplay_viewsplugin qplay_native qplay_player_plugin Qt::Network bcrypt
 )

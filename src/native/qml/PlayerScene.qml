@@ -271,6 +271,10 @@ Item {
             }
         }
 
+        MouseArea {
+            anchors.fill: parent
+        }
+
         HoverHandler {
             id: bottomHover
         }
@@ -349,6 +353,35 @@ Item {
             Item {
                 Layout.fillWidth: true
                 implicitHeight: 52
+
+                RowLayout {
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: root.backend.downloadState !== "unavailable"
+                    spacing: 4
+
+                    PlayerIconButton {
+                        objectName: "downloadButton"
+                        iconSource: root.iconRoot + (root.backend.downloadState === "queued" ? "check.svg" : "download.svg")
+                        enabled: root.backend.downloadState === "ready" || root.backend.downloadState === "failed"
+                        hint: root.backend.downloadState === "pending"
+                              ? (root.russian ? qsTr("Добавление в загрузки") : qsTr("Adding to downloads"))
+                              : root.backend.downloadState === "queued"
+                              ? (root.russian ? qsTr("В загрузках") : qsTr("In downloads"))
+                              : root.backend.downloadState === "failed"
+                              ? (root.russian ? qsTr("Повторить загрузку") : qsTr("Retry download"))
+                              : (root.russian ? qsTr("Сохранить видео") : qsTr("Save video"))
+                        onClicked: root.backend.requestDownload()
+                    }
+                    Label {
+                        visible: root.backend.downloadState === "pending" || root.backend.downloadState === "failed"
+                        text: root.backend.downloadState === "pending"
+                              ? (root.russian ? qsTr("Добавление…") : qsTr("Adding…"))
+                              : (root.russian ? qsTr("Не удалось") : qsTr("Failed"))
+                        color: root.backend.downloadState === "failed" ? "#ff9a9a" : "#b9bec4"
+                        font.pixelSize: 13
+                    }
+                }
 
                 RowLayout {
                     anchors.centerIn: parent

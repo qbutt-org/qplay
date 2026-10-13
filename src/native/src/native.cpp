@@ -2,6 +2,7 @@
 
 #include <utility>
 #include <QThreadPool>
+#include <QTimer>
 
 #include "qplay_native/src/controller.cxxqt.h"
 #include "qplay_native/src/track_model.cxxqt.h"
@@ -33,6 +34,11 @@ void Qplay::startSubtitleTask(::rust::Box<SubtitleTask> task)
     {
         run_subtitle_task(std::move(task));
     });
+}
+
+void Qplay::scheduleDownloadTimeout(PlayerController &player, const QString &token, const int milliseconds)
+{
+    QTimer::singleShot(milliseconds, Qt::PreciseTimer, &player, [&player, token] { player.downloadTimeout(token); });
 }
 
 std::unique_ptr<Qplay::TrackModel> Qplay::createTrackModel()

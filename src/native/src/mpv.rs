@@ -40,6 +40,7 @@ pub const EVENT_COMMAND_REPLY: c_int = 5;
 pub const EVENT_START_FILE: c_int = 6;
 pub const EVENT_END_FILE: c_int = 7;
 pub const EVENT_FILE_LOADED: c_int = 8;
+pub const EVENT_CLIENT_MESSAGE: c_int = 16;
 pub const EVENT_PROPERTY_CHANGE: c_int = 22;
 
 pub const RENDER_API_TYPE: c_int = 1;
@@ -59,6 +60,12 @@ pub struct RawProperty {
     pub name: *const c_char,
     pub format: c_int,
     pub data: *mut c_void,
+}
+
+#[repr(C)]
+pub struct RawClientMessage {
+    pub count: c_int,
+    pub arguments: *const *const c_char,
 }
 
 #[repr(C)]

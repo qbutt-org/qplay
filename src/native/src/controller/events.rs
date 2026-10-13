@@ -21,7 +21,11 @@ impl ffi::PlayerController {
             count += 1;
             match event {
                 Event::Property(name, value) => self.as_mut().apply_property(&name, value),
+                Event::ClientMessage(arguments) => {
+                    self.as_mut().receive_download_message(&arguments)
+                }
                 Event::StartFile => {
+                    self.as_mut().rust_mut().download = None;
                     self.as_mut().cancel_subtitle_job();
                     let mut state = self.as_mut().rust_mut();
                     state.subtitle_original_id = None;
@@ -76,6 +80,7 @@ impl ffi::PlayerController {
                     self.as_mut().maybe_start_subtitle_window();
                 }
                 Event::EndFile(error) => {
+                    self.as_mut().rust_mut().download = None;
                     self.as_mut().cancel_subtitle_job();
                     self.as_mut().rust_mut().file_loaded = false;
                     self.as_mut().rust_mut().subtitle_media = None;

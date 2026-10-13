@@ -21,6 +21,7 @@ pub enum Event {
     FileLoaded,
     EndFile(i32),
     Command(u64, i32),
+    ClientMessage(Vec<String>),
     Shutdown,
     Other,
 }
@@ -291,6 +292,31 @@ impl Session {
                 Some(Event::EndFile(data.error))
             }
             mpv::EVENT_FILE_LOADED => Some(Event::FileLoaded),
+            mpv::EVENT_CLIENT_MESSAGE => {
+                // SAFETY: mpv owns the message and null-terminated arguments until
+                // the next event poll. Copy only the bounded integration messages.
+                let data = unsafe { &*event.data.cast::<mpv::RawClientMessage>() };
+                if data.count != 3 || data.arguments.is_null() {
+                    return Some(Event::Other);
+                }
+                let arguments =
+                    unsafe { std::slice::from_raw_parts(data.arguments, data.count as usize) };
+                let mut copied = Vec::with_capacity(arguments.len());
+                for argument in arguments {
+                    if argument.is_null() {
+                        return Some(Event::Other);
+                    }
+                    let bytes = unsafe { CStr::from_ptr(*argument) }.to_bytes();
+                    if bytes.len() > 16 * 1024 {
+                        return Some(Event::Other);
+                    }
+                    let Ok(text) = std::str::from_utf8(bytes) else {
+                        return Some(Event::Other);
+                    };
+                    copied.push(text.to_owned());
+                }
+                Some(Event::ClientMessage(copied))
+            }
             mpv::EVENT_PROPERTY_CHANGE => {
                 // SAFETY: PROPERTY_CHANGE data has the pinned mpv_event_property layout.
                 let data = unsafe { &*event.data.cast::<mpv::RawProperty>() };

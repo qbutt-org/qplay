@@ -5,6 +5,7 @@ use crate::gpu::content::ContentChoice;
 #[derive(Clone, Default)]
 pub struct LaunchOptions {
     pub ipc: bool,
+    pub external_downloads: bool,
     pub ytdl_path: Option<String>,
     pub content: Option<ContentChoice>,
     options: Vec<(String, String)>,
@@ -30,8 +31,7 @@ impl LaunchOptions {
                 .and_then(|arg| arg.split_once('='))
             else {
                 if argument == "--external-downloads" {
-                    // The native Save action is tracked separately; accept the existing
-                    // qbutt launch flag while the player replaces that UI.
+                    launch.external_downloads = true;
                     continue;
                 }
                 return Err(format!("Unsupported playback option: {argument}"));

@@ -32,6 +32,8 @@
 #include <QThread>
 #include <QThreadPool>
 
+#include "downloads.h"
+
 #include "qplay_native/src/controller.cxxqt.h"
 #include "qplay_native/src/track_model.cxxqt.h"
 
@@ -145,6 +147,8 @@ int main(int argc, char *argv[])
     const QString networkSubtitle = qEnvironmentVariable("QPLAY_SUBTITLE_HTTP_QA");
     const QString embeddedFormat = qEnvironmentVariable("QPLAY_SUBTITLE_MKV_QA");
     const bool embeddedNetworkQa = !embeddedFormat.isEmpty();
+    const bool downloadQa = qEnvironmentVariableIsSet("QPLAY_DOWNLOAD_QA");
+    const QString downloadPipe = QStringLiteral("qbutt-mpv-save-%1").arg(GetCurrentProcessId());
 
     try
     {
@@ -204,6 +208,12 @@ int main(int argc, char *argv[])
                 for (const QString &header : {QStringLiteral("Authorization: fixture-authorization"), QStringLiteral("Cookie: fixture-cookie")})
                     launch.append(QStringLiteral("--http-header-fields-append=%") + QString::number(header.size()) + QLatin1Char('%') + header);
                 require(backend.configureLaunch(launch).isEmpty(), "Configure HTTP fixture headers failed");
+            }
+            if (downloadQa)
+            {
+                require(backend.configureLaunch({QStringLiteral("--external-downloads"),
+                    QStringLiteral("--input-ipc-server=\\\\.\\pipe\\") + downloadPipe}).isEmpty(),
+                    "Configure download IPC fixture failed");
             }
             QFile savedPreferences(preferences);
             require(savedPreferences.open(QIODevice::ReadOnly), "Read saved player preferences failed");
@@ -290,6 +300,17 @@ int main(int argc, char *argv[])
             backend.initialize(library + QStringLiteral(".missing"), profile);
             backend.initialize(library, profile);
             wait([&] { return backend.engineReady(); }, "Initialize actual Rust/mpv session timed out");
+            if (downloadQa)
+            {
+                evidence = exerciseDownloads(backend, window, *root, downloadPipe, media, secondMedia, tick);
+                tick();
+                require(target.toImage().save(evidencePrefix + QStringLiteral(".png")), "Save download scene failed");
+                evidence[QStringLiteral("exitCode")] = 0;
+                QFile output(evidencePrefix + QStringLiteral(".json"));
+                require(output.open(QIODevice::WriteOnly), "Write download evidence failed");
+                output.write(QJsonDocument(evidence).toJson());
+                return 0;
+            }
             if (embeddedNetworkQa)
             {
                 backend.openMedia(media);
