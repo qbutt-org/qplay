@@ -1,7 +1,10 @@
 #include <cstdio>
+#include <cstring>
 #include <exception>
+#include <memory>
 
 #include <QByteArray>
+#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -23,9 +26,29 @@
 
 int main(int argc, char *argv[])
 {
-    QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
-    QQuickStyle::setStyle(QStringLiteral("Basic"));
-    QGuiApplication app(argc, argv);
+    bool metadataQuery = false;
+    for (int i = 1; i < argc; ++i)
+    {
+        if (std::strcmp(argv[i], "--") == 0)
+            break;
+        if ((std::strcmp(argv[i], "--version-json") == 0)
+            || (std::strcmp(argv[i], "--runtime-info-json") == 0))
+        {
+            metadataQuery = true;
+            break;
+        }
+    }
+
+    std::unique_ptr<QCoreApplication> app;
+    if (metadataQuery)
+        app = std::make_unique<QCoreApplication>(argc, argv);
+    else
+    {
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
+        QQuickStyle::setStyle(QStringLiteral("Basic"));
+        app = std::make_unique<QGuiApplication>(argc, argv);
+        QGuiApplication::setWindowIcon(QIcon(QStringLiteral(":/assets/qplay.ico")));
+    }
 
     QString media;
     QString profile;
@@ -33,7 +56,7 @@ int main(int argc, char *argv[])
     bool versionJson = false;
     bool runtimeInfoJson = false;
     bool positional = false;
-    const QStringList arguments = app.arguments();
+    const QStringList arguments = app->arguments();
     for (int i = 1; i < arguments.size(); ++i)
     {
         const QString &argument = arguments.at(i);
@@ -61,8 +84,7 @@ int main(int argc, char *argv[])
         std::fprintf(stderr, "Metadata query cannot include media or another query.\n");
         return 2;
     }
-    app.setApplicationName(QStringLiteral("qplay"));
-    app.setWindowIcon(QIcon(QStringLiteral(":/assets/qplay.ico")));
+    app->setApplicationName(QStringLiteral("qplay"));
     const QString installDirectory = QCoreApplication::applicationDirPath();
     const QString library = installDirectory + QStringLiteral("/engine/libmpv-2.dll");
     const bool portable = QFileInfo::exists(installDirectory + QStringLiteral("/qplay.portable"));
@@ -124,7 +146,7 @@ int main(int argc, char *argv[])
         backend.configure(configuration + QStringLiteral("/preferences.json"), QLocale::system().name());
         backend.configureUpdates(profile, installDirectory, portable);
         QObject::connect(&backend, &Qplay::PlayerController::shutdownRequested,
-            &app, [&app] { app.quit(); });
+            app.get(), [&app] { app->quit(); });
         QQmlApplicationEngine engine;
         QStringList startupWarnings;
         QObject::connect(&engine, &QQmlEngine::warnings, &engine,
@@ -164,7 +186,7 @@ int main(int argc, char *argv[])
         if (!media.isEmpty())
             backend.openMedia(media);
         backend.initialize(library, profile);
-        result = app.exec();
+        result = app->exec();
     }
     QThreadPool::globalInstance()->waitForDone();
     return result;
