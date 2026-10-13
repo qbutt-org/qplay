@@ -5,7 +5,7 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use qplay_native::subtitles::{
-    MpvEmbeddedTrack, PlaybackMediaDigest, SubtitleCache, SubtitleDocument, SubtitleFormat,
+    MpvEmbeddedTrack, PlaybackMedia, SubtitleCache, SubtitleDocument, SubtitleFormat,
     SubtitleIdentity, SubtitleService, SubtitleServiceError, SubtitleSourceError,
     SubtitleTranslationOptions, VerifiedMediaTools, digest_local_media, extract_local_embedded,
     pending_batch, read_local_external, verify_embedded_track,
@@ -240,7 +240,7 @@ async fn media_fixture(library: &Path) -> Result<()> {
         assert_eq!(digest_local_media(&media, cancelled).await?.len(), 64);
         let identity_file = directory.join("identity.bin");
         std::fs::write(&identity_file, b"first media generation")?;
-        let playback = PlaybackMediaDigest::new(identity_file.clone());
+        let playback = PlaybackMedia::new(identity_file.to_string_lossy().into_owned(), Vec::new(), None);
         let (_sender, cancelled) = watch::channel(true);
         assert!(matches!(
             playback.get(cancelled).await,
@@ -256,7 +256,7 @@ async fn media_fixture(library: &Path) -> Result<()> {
         std::fs::write(&identity_file, b"reopened media generation")?;
         let (_sender, cancelled) = watch::channel(false);
         assert_eq!(playback.get(cancelled).await?, first_digest);
-        let reopened = PlaybackMediaDigest::new(identity_file);
+        let reopened = PlaybackMedia::new(identity_file.to_string_lossy().into_owned(), Vec::new(), None);
         let (_sender, cancelled) = watch::channel(false);
         assert_ne!(reopened.get(cancelled).await?, first_digest);
         let selected = MpvEmbeddedTrack {

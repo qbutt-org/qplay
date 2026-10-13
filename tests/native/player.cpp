@@ -7,6 +7,7 @@
 #include <stdexcept>
 
 #include <QDir>
+#include <QDirIterator>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
@@ -132,6 +133,7 @@ int main(int argc, char *argv[])
     QJsonObject evidence;
     int exitCode = 0;
     bool pendingCatalogCancellation = false;
+    const QString networkSubtitle = qEnvironmentVariable("QPLAY_SUBTITLE_HTTP_QA");
 
     try
     {
@@ -185,6 +187,13 @@ int main(int argc, char *argv[])
             backend.changeLanguage(QStringLiteral("en"));
             backend.changeAppearance(QStringLiteral("dark"));
             backend.changeFramegen(QStringLiteral("off"));
+            if (!networkSubtitle.isEmpty())
+            {
+                QStringList launch;
+                for (const QString &header : {QStringLiteral("Authorization: fixture-authorization"), QStringLiteral("Cookie: fixture-cookie")})
+                    launch.append(QStringLiteral("--http-header-fields-append=%") + QString::number(header.size()) + QLatin1Char('%') + header);
+                require(backend.configureLaunch(launch).isEmpty(), "Configure HTTP fixture headers failed");
+            }
             QFile savedPreferences(preferences);
             require(savedPreferences.open(QIODevice::ReadOnly), "Read saved player preferences failed");
             auto settings = QJsonDocument::fromJson(savedPreferences.readAll()).object();
@@ -352,11 +361,15 @@ int main(int argc, char *argv[])
             wait([&] { return std::abs(backend.position() - 20) < 0.05; }, "Exact seek timed out");
             require(backend.paused(), "Seeking lost paused state");
 
-            const QString subtitles = QDir(profile).absoluteFilePath(QStringLiteral("English.srt"));
-            QFile subtitleFile(subtitles);
-            require(subtitleFile.open(QIODevice::WriteOnly), "Create legal subtitle fixture failed");
-            subtitleFile.write("1\n00:00:00,000 --> 00:00:45,000\nNative Rust player subtitle\n");
-            subtitleFile.close();
+            const QString subtitles = networkSubtitle.isEmpty()
+                ? QDir(profile).absoluteFilePath(QStringLiteral("English.srt")) : networkSubtitle;
+            if (networkSubtitle.isEmpty())
+            {
+                QFile subtitleFile(subtitles);
+                require(subtitleFile.open(QIODevice::WriteOnly), "Create legal subtitle fixture failed");
+                subtitleFile.write("1\n00:00:00,000 --> 00:00:45,000\nNative Rust player subtitle\n");
+                subtitleFile.close();
+            }
             backend.addSubtitle(subtitles);
             wait([&] { return selectedSubtitle(backend.subtitleTracks()) >= 0; }, "External subtitle track did not arrive");
             const auto subtitleId = selectedSubtitle(backend.subtitleTracks());
@@ -572,9 +585,36 @@ int main(int argc, char *argv[])
             tick();
             require(target.toImage().save(evidencePrefix + QStringLiteral(".settings-dark.png")),
                 "Save dark advanced settings failed");
+            const auto originalSubtitleFrame = target.toImage().copy(0, 88, 880, 160);
             click(window, *translationSwitch);
             wait([&] { return backend.subtitleTranslationEnabled(); },
                 "Global subtitle translation switch did not enable the service");
+            if (!networkSubtitle.isEmpty())
+            {
+                wait([&] { return backend.subtitleStatus() == QStringLiteral("ready")
+                    && selectedSubtitle(backend.subtitleTracks()) == -1; },
+                    "HTTP subtitle cache did not become the selected generated track");
+                QDirIterator outputs(QDir(profile).absoluteFilePath(QStringLiteral("subtitle-session")),
+                    {QStringLiteral("*.ass")}, QDir::Files, QDirIterator::Subdirectories);
+                bool styledTranslation = false;
+                while (outputs.hasNext())
+                {
+                    QFile output(outputs.next());
+                    require(output.open(QIODevice::ReadOnly), "Read generated HTTP subtitle failed");
+                    const auto content = output.readAll();
+                    styledTranslation |= content.contains("Style: Default,Arial,20")
+                        && content.contains("{\\an8}{\\pos(640,140)}Cached network translation");
+                }
+                require(styledTranslation, "HTTP subtitle translation lost its accepted text or ASS style");
+                QElapsedTimer subtitleFrame;
+                subtitleFrame.start();
+                while (subtitleFrame.elapsed() < 250)
+                    tick();
+                require(target.toImage().copy(0, 88, 880, 160) != originalSubtitleFrame,
+                    "Selecting the HTTP translation did not change the subtitle pixels");
+                require(target.toImage().save(evidencePrefix + QStringLiteral(".network-subtitle.png")),
+                    "Save HTTP subtitle frame failed");
+            }
             tick();
             click(window, *translationSwitch);
             wait([&] { return !backend.subtitleTranslationEnabled()
@@ -582,6 +622,31 @@ int main(int argc, char *argv[])
                 "Disabling translation did not restore the original subtitle track");
             require(QThreadPool::globalInstance()->waitForDone(15000),
                 "Canceled subtitle worker did not stop");
+            if (!networkSubtitle.isEmpty())
+            {
+                backend.addSubtitle(QString(networkSubtitle).replace(QStringLiteral("native.ass"), QStringLiteral("native-slow.ass")));
+                wait([&] { return selectedSubtitle(backend.subtitleTracks()) >= 0
+                    && selectedSubtitle(backend.subtitleTracks()) != subtitleId; },
+                    "Pending HTTP subtitle original did not load");
+                const auto pendingOriginal = selectedSubtitle(backend.subtitleTracks());
+                click(window, *translationSwitch);
+                wait([&] { return backend.subtitleTranslationEnabled(); }, "Pending HTTP translation did not start");
+                QElapsedTimer pendingRead;
+                pendingRead.start();
+                while (pendingRead.elapsed() < 2000)
+                    tick();
+                QElapsedTimer cancellation;
+                cancellation.start();
+                click(window, *translationSwitch);
+                require(!backend.subtitleTranslationEnabled() && cancellation.elapsed() < 250,
+                    "Canceling HTTP subtitles blocked the GUI");
+                wait([&] { return selectedSubtitle(backend.subtitleTracks()) == pendingOriginal; },
+                    "Canceling HTTP subtitles lost the original track");
+                require(QThreadPool::globalInstance()->waitForDone(2000), "Canceled HTTP reader did not drain");
+                backend.selectTrack(QStringLiteral("sub"), subtitleId);
+                wait([&] { return selectedSubtitle(backend.subtitleTracks()) == subtitleId; },
+                    "Original HTTP subtitle selection did not return");
+            }
             require(QMetaObject::invokeMethod(settingsPanel.get(), "close"), "Close advanced settings failed");
             backend.togglePause();
             wait([&] { return !backend.paused(); }, "Resume after settings inspection failed");
@@ -614,6 +679,7 @@ int main(int argc, char *argv[])
                 {QStringLiteral("settingsDarkRendered"), true},
                 {QStringLiteral("subtitleTargetSelection"), true},
                 {QStringLiteral("subtitleToggleCancellation"), true},
+                {QStringLiteral("networkSubtitleCacheStyleOriginal"), !networkSubtitle.isEmpty()},
                 {QStringLiteral("unavailableSubtitleModel"), true},
                 {QStringLiteral("unavailableSubtitleEffort"), true},
                 {QStringLiteral("subtitleModelCount"), backend.subtitleModels().size()},

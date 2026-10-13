@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -28,7 +27,7 @@ impl ffi::PlayerController {
                     state.subtitle_original_id = None;
                     state.subtitle_output_id = None;
                     state.subtitle_output_path = None;
-                    state.subtitle_media_digest = None;
+                    state.subtitle_media = None;
                     state.subtitle_demuxer.clear();
                     state.subtitle_translation_view = state.subtitle_translation.enabled;
                     state.subtitle_status = "idle".into();
@@ -44,10 +43,31 @@ impl ffi::PlayerController {
                         }
                     }
                     let mut state = self.as_mut().rust_mut();
-                    state.subtitle_media_digest = state.media.as_ref().map(|media| {
-                        Arc::new(crate::subtitles::PlaybackMediaDigest::new(PathBuf::from(
-                            media,
-                        )))
+                    state.subtitle_media = state.media.as_ref().map(|media| {
+                        let mut headers = session
+                            .string_array("http-header-fields")
+                            .unwrap_or_default();
+                        for (property, name) in
+                            [("user-agent", "User-Agent"), ("referrer", "Referer")]
+                        {
+                            if headers.iter().any(|header| {
+                                header
+                                    .split_once(':')
+                                    .is_some_and(|(key, _)| key.trim().eq_ignore_ascii_case(name))
+                            }) {
+                                continue;
+                            }
+                            if let Some(value) =
+                                session.text(property).filter(|value| !value.is_empty())
+                            {
+                                headers.push(format!("{name}: {value}"));
+                            }
+                        }
+                        Arc::new(crate::subtitles::PlaybackMedia::new(
+                            media.clone(),
+                            headers,
+                            session.text("http-proxy"),
+                        ))
                     });
                     state.file_loaded = true;
                     state.error_text = QString::default();
@@ -58,7 +78,7 @@ impl ffi::PlayerController {
                 Event::EndFile(error) => {
                     self.as_mut().cancel_subtitle_job();
                     self.as_mut().rust_mut().file_loaded = false;
-                    self.as_mut().rust_mut().subtitle_media_digest = None;
+                    self.as_mut().rust_mut().subtitle_media = None;
                     self.as_mut().rust_mut().subtitle_text.clear();
                     if error < 0
                         && (self.launch.ipc || self.media.as_ref() == Some(&self.observed_path))

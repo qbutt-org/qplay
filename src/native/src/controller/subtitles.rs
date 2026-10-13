@@ -10,9 +10,9 @@ use tokio::sync::watch;
 use super::ffi;
 use crate::preferences::SubtitleTranslationPreferences;
 use crate::subtitles::{
-    MpvEmbeddedTrack, PlaybackMediaDigest, SubtitleFormat, SubtitleIdentity, SubtitleService,
+    MpvEmbeddedTrack, PlaybackMedia, SubtitleFormat, SubtitleIdentity, SubtitleService,
     SubtitleSourceError, SubtitleTranslationOptions, VerifiedMediaTools, extract_local_embedded,
-    read_local_external, verify_embedded_track, window_bounds,
+    verify_embedded_track, window_bounds,
 };
 use crate::track_model::Track;
 
@@ -29,7 +29,7 @@ enum Operation {
 struct WindowTask {
     service: Arc<SubtitleService>,
     generation: u64,
-    media_digest: Arc<PlaybackMediaDigest>,
+    media: Arc<PlaybackMedia>,
     library: PathBuf,
     track: Track,
     demuxer: String,
@@ -116,16 +116,16 @@ async fn translate_window(
         _ = selection_cancel.changed() => return Err("cancelled"),
     };
     let digest = task
-        .media_digest
+        .media
         .get(task.cancelled.clone())
         .await
         .map_err(source_status)?;
-    let media = task.media_digest.path();
     let (document, identity) = if task.track.external {
         let source = task.track.external_filename.as_ref().ok_or("unsupported")?;
-        let path = Path::new(source);
-        let format = external_format(path).ok_or("unsupported")?;
-        let (document, source_digest) = read_local_external(path, format)
+        let format = external_format(source).ok_or("unsupported")?;
+        let (document, source_digest) = task
+            .media
+            .read_external(source, format, task.cancelled.clone())
             .await
             .map_err(source_status)?;
         let identity = SubtitleIdentity {
@@ -135,6 +135,7 @@ async fn translate_window(
         };
         (document, identity)
     } else {
+        let media = task.media.path().ok_or("unsupported")?;
         let tools = VerifiedMediaTools::from_library(&task.library).map_err(source_status)?;
         let selected = MpvEmbeddedTrack {
             mpv_id: task.track.id,
@@ -205,7 +206,9 @@ async fn translate_window(
     Ok(())
 }
 
-fn external_format(path: &Path) -> Option<SubtitleFormat> {
+fn external_format(source: &str) -> Option<SubtitleFormat> {
+    let url = reqwest::Url::parse(source).ok();
+    let path = Path::new(url.as_ref().map_or(source, |url| url.path()));
     match path.extension()?.to_str()?.to_ascii_lowercase().as_str() {
         "ass" => Some(SubtitleFormat::Ass),
         "ssa" => Some(SubtitleFormat::Ssa),
@@ -461,10 +464,10 @@ impl ffi::PlayerController {
         if !track.external && self.subtitle_demuxer.is_empty() {
             return;
         }
-        let (Some(service), Some(library), Some(media_digest)) = (
+        let (Some(service), Some(library), Some(media)) = (
             self.subtitle_service.clone(),
             self.subtitle_library.clone(),
-            self.subtitle_media_digest.clone(),
+            self.subtitle_media.clone(),
         ) else {
             self.as_mut().rust_mut().subtitle_status = "unavailable".into();
             self.as_mut().state_changed();
@@ -480,7 +483,7 @@ impl ffi::PlayerController {
         let (cancel, cancelled) = watch::channel(false);
         let generation = self.subtitle_task_generation;
         let format = match track.external {
-            true => external_format(Path::new(track.external_filename.as_deref().unwrap_or("")))
+            true => external_format(track.external_filename.as_deref().unwrap_or(""))
                 .unwrap_or(SubtitleFormat::Ass),
             false if matches!(track.codec.to_ascii_lowercase().as_str(), "ass" | "ssa") => {
                 SubtitleFormat::Ass
@@ -492,7 +495,7 @@ impl ffi::PlayerController {
         let task = WindowTask {
             service,
             generation,
-            media_digest,
+            media,
             library,
             track,
             demuxer: self.subtitle_demuxer.clone(),

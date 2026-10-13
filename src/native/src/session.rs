@@ -248,6 +248,11 @@ impl Session {
         (result >= 0).then_some(value != 0)
     }
 
+    pub fn string_array(&self, name: &str) -> Option<Vec<String>> {
+        let raw = self.raw();
+        raw.api.string_array(raw.handle, name)
+    }
+
     pub fn text(&self, name: &str) -> Option<String> {
         let raw = self.raw();
         let name = CString::new(name).ok()?;

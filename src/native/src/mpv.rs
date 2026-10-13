@@ -103,6 +103,7 @@ pub struct Api {
     option_node: unsafe extern "C" fn(Handle, *const c_char, c_int, *mut c_void) -> c_int,
     pub get_property: unsafe extern "C" fn(Handle, *const c_char, c_int, *mut c_void) -> c_int,
     pub free: unsafe extern "C" fn(*mut c_void),
+    free_node: unsafe extern "C" fn(*mut Node),
     pub command: unsafe extern "C" fn(Handle, u64, *const *const c_char) -> c_int,
     pub observe: unsafe extern "C" fn(Handle, u64, *const c_char, c_int) -> c_int,
     pub wait: unsafe extern "C" fn(Handle, c_double) -> *mut RawEvent,
@@ -152,6 +153,7 @@ impl Api {
             option_node: symbol!("mpv_set_option"),
             get_property: symbol!("mpv_get_property"),
             free: symbol!("mpv_free"),
+            free_node: symbol!("mpv_free_node_contents"),
             command: symbol!("mpv_command_async"),
             observe: symbol!("mpv_observe_property"),
             wait: symbol!("mpv_wait_event"),
@@ -174,6 +176,61 @@ impl Api {
         } else {
             Ok(())
         }
+    }
+
+    pub fn string_array(&self, handle: Handle, name: &str) -> Option<Vec<String>> {
+        let name = CString::new(name).ok()?;
+        let mut node = Node {
+            value: NodeValue {
+                list: std::ptr::null_mut(),
+            },
+            format: 0,
+        };
+        // SAFETY: mpv initializes this node and owns its contents until free_node.
+        let status = unsafe {
+            (self.get_property)(
+                handle,
+                name.as_ptr(),
+                FORMAT_NODE,
+                (&mut node as *mut Node).cast(),
+            )
+        };
+        if status < 0 {
+            return None;
+        }
+        let result = (|| {
+            if node.format != FORMAT_NODE_ARRAY {
+                return None;
+            }
+            // SAFETY: The pinned client API supplies an array for FORMAT_NODE_ARRAY.
+            let list = unsafe { node.value.list.as_ref() }?;
+            if !(0..=64).contains(&list.count) || (list.count != 0 && list.values.is_null()) {
+                return None;
+            }
+            let mut entries = Vec::new();
+            let mut bytes = 0;
+            for index in 0..list.count as usize {
+                // SAFETY: index is bounded by the validated client array length.
+                let entry = unsafe { &*list.values.add(index) };
+                if entry.format != FORMAT_STRING {
+                    return None;
+                }
+                let pointer = unsafe { entry.value.string };
+                if pointer.is_null() {
+                    return None;
+                }
+                let value = unsafe { CStr::from_ptr(pointer) }.to_str().ok()?;
+                bytes += value.len();
+                if bytes > 64 * 1024 {
+                    return None;
+                }
+                entries.push(value.to_owned());
+            }
+            Some(entries)
+        })();
+        // SAFETY: Exactly one release follows a successful node property read.
+        unsafe { (self.free_node)(&mut node) };
+        result
     }
 
     pub fn set_string_map(

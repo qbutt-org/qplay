@@ -1,5 +1,4 @@
-//! Local, caller-authorized text acquisition. Network and torrent range
-//! acquisition is a separate, unfinished capability.
+//! Local, caller-authorized text acquisition and verified FFmpeg mapping.
 
 use std::collections::HashSet;
 use std::fs::File;
@@ -13,12 +12,12 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
-use tokio::sync::{OnceCell, watch};
+use tokio::sync::watch;
 use tokio::time::timeout;
 
 use super::{SubtitleDocument, SubtitleError, SubtitleFormat, SubtitleIdentity};
 
-const MAX_SOURCE_BYTES: u64 = 8 * 1024 * 1024;
+pub(super) const MAX_SOURCE_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_PROBE_BYTES: u64 = 1024 * 1024;
 const MAX_MAPPING_READ_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_MAPPING_FRAMES: usize = 20_000;
@@ -67,42 +66,6 @@ impl VerifiedMediaTools {
     }
 }
 
-/// One local-file SHA-256 snapshot per loaded playback. A new load creates
-/// a new owner, so reopening a changed file cannot reuse the old digest.
-pub struct PlaybackMediaDigest {
-    path: PathBuf,
-    digest: OnceCell<String>,
-}
-
-impl PlaybackMediaDigest {
-    pub fn new(path: PathBuf) -> Self {
-        Self {
-            path,
-            digest: OnceCell::new(),
-        }
-    }
-
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
-    pub async fn get(
-        &self,
-        mut cancelled: watch::Receiver<bool>,
-    ) -> Result<String, SubtitleSourceError> {
-        if *cancelled.borrow() {
-            return Err(SubtitleSourceError::Cancelled);
-        }
-        let digest_cancelled = cancelled.clone();
-        tokio::select! {
-            result = self.digest.get_or_try_init(|| {
-                digest_local_media(&self.path, digest_cancelled)
-            }) => result.cloned(),
-            _ = cancelled.changed() => Err(SubtitleSourceError::Cancelled),
-        }
-    }
-}
-
 /// Exact fields read from mpv's selected `track-list` row and `current-demuxer`.
 pub struct MpvEmbeddedTrack {
     pub mpv_id: i64,
@@ -137,7 +100,7 @@ impl EmbeddedTextTrack {
     }
 }
 
-fn validate_text_codec(codec: &str) -> Result<(), SubtitleSourceError> {
+pub(super) fn validate_text_codec(codec: &str) -> Result<(), SubtitleSourceError> {
     let codec = codec.to_ascii_lowercase();
     if matches!(
         codec.as_str(),
@@ -591,7 +554,7 @@ pub async fn extract_local_embedded(
     Ok(SubtitleDocument::parse(&text, document_format)?)
 }
 
-fn local_path(path: &Path) -> bool {
+pub(super) fn local_path(path: &Path) -> bool {
     if !path.is_absolute() {
         return false;
     }
@@ -618,7 +581,7 @@ async fn regular_file(path: &Path) -> Result<bool, SubtitleSourceError> {
     Ok(metadata.is_file() && !metadata.file_type().is_symlink())
 }
 
-fn decode_text(bytes: &[u8]) -> Result<String, SubtitleSourceError> {
+pub(super) fn decode_text(bytes: &[u8]) -> Result<String, SubtitleSourceError> {
     if bytes.starts_with(&[0xff, 0xfe]) || bytes.starts_with(&[0xfe, 0xff]) {
         let little = bytes[0] == 0xff;
         let units: Vec<_> = bytes[2..]

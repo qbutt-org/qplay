@@ -49,7 +49,7 @@ impl ffi::PlayerController {
                 state.gpu.interlaced_seen = false;
                 state.gpu.video_signature = None;
                 state.media = Some(media);
-                state.subtitle_media_digest = None;
+                state.subtitle_media = None;
                 state.online_progress = -1;
                 state.file_loaded = false;
                 state.pending_commands.clear();
@@ -185,7 +185,7 @@ impl ffi::PlayerController {
         self.as_mut().cancel_subtitle_job();
         let mut state = self.as_mut().rust_mut();
         state.media = None;
-        state.subtitle_media_digest = None;
+        state.subtitle_media = None;
         state.file_loaded = false;
         state.pending_commands.clear();
         state.state = ffi::State::Stopped;
