@@ -100,7 +100,7 @@ impl EmbeddedTextTrack {
     }
 }
 
-pub(super) fn validate_text_codec(codec: &str) -> Result<(), SubtitleSourceError> {
+fn validate_text_codec(codec: &str) -> Result<(), SubtitleSourceError> {
     let codec = codec.to_ascii_lowercase();
     if matches!(
         codec.as_str(),
