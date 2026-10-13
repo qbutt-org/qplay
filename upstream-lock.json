@@ -13,8 +13,8 @@
   "nativeProfile": {
     "framegenManager": {
       "path": "profile/tools/bin/framegen-manager.exe",
-      "sha256": "f26aa6d1c4e5324cbfbae258fa450a7ad19c2ad3e8da706e14c323b9d96ff6e7",
-      "binaryRevision": "5d9c65333fc4040b5a53a7f495fdc1951b5efe4d"
+      "sha256": "7cd61366322fcdea10c31eb30923e6c98809ac31a1daca515ea650ab404e0339",
+      "binaryRevision": "9c192a73823bc00b88757b2d585acb551ba25170"
     }
   },
   "mpv": {
