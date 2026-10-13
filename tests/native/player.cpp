@@ -31,6 +31,7 @@
 #include <QStringList>
 #include <QThread>
 #include <QThreadPool>
+#include <QUrl>
 
 #include "downloads.h"
 
@@ -300,6 +301,43 @@ int main(int argc, char *argv[])
             backend.initialize(library + QStringLiteral(".missing"), profile);
             backend.initialize(library, profile);
             wait([&] { return backend.engineReady(); }, "Initialize actual Rust/mpv session timed out");
+            if (qEnvironmentVariableIsSet("QPLAY_LOCAL_FILE_QA"))
+            {
+                const QString fileUrl = QUrl::fromLocalFile(secondMedia).toString();
+                backend.openMedia(fileUrl);
+                wait([&] { return backend.mediaLoaded() && backend.position() > 0.5; },
+                    "File dialog URL did not become loaded");
+                require(backend.state() == Qplay::Playback::State::Playing, "File URL remained in Loading state");
+                auto *pause = findVisualItem(root.get(), QStringLiteral("pauseButton"));
+                auto *seek = findVisualItem(root.get(), QStringLiteral("seekSlider"));
+                require(pause && pause->isEnabled() && seek && seek->isEnabled(),
+                    "File URL transport controls remained disabled");
+                click(window, *pause);
+                wait([&] { return backend.paused(); }, "Pause after File dialog failed");
+                backend.seek(12.0);
+                wait([&] { return std::abs(backend.position() - 12.0) < 0.2; },
+                    "Seek after File dialog failed");
+                click(window, *pause);
+                wait([&] { return !backend.paused() && backend.position() > 12.2; },
+                    "Resume after File dialog failed");
+                tick();
+                require(target.toImage().save(evidencePrefix + QStringLiteral(".png")),
+                    "Save File URL scene failed");
+                backend.openMedia(QStringLiteral("file://[invalid"));
+                require(!backend.errorText().isEmpty() && backend.state() == Qplay::Playback::State::Failed,
+                    "Malformed file URL was accepted");
+                backend.stop();
+                evidence = {
+                    {QStringLiteral("fileUrl"), fileUrl},
+                    {QStringLiteral("fileDialogPauseSeekResume"), true},
+                    {QStringLiteral("malformedFileUrlRejected"), true},
+                    {QStringLiteral("exitCode"), 0}
+                };
+                QFile output(evidencePrefix + QStringLiteral(".json"));
+                require(output.open(QIODevice::WriteOnly), "Write File URL evidence failed");
+                output.write(QJsonDocument(evidence).toJson());
+                return 0;
+            }
             if (downloadQa)
             {
                 evidence = exerciseDownloads(backend, window, *root, downloadPipe, media, secondMedia, tick);

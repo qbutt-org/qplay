@@ -463,10 +463,17 @@ impl Drop for RenderLease {
 }
 
 pub fn media_path(input: &str) -> Result<String, String> {
-    if input.contains("://") {
+    let path = if input.starts_with("file:") {
+        reqwest::Url::parse(input)
+            .map_err(|error| format!("Open media: {error}"))?
+            .to_file_path()
+            .map_err(|_| "Open media: invalid file URL")?
+    } else if input.contains("://") {
         return Ok(input.into());
-    }
-    let path: PathBuf = Path::new(input)
+    } else {
+        PathBuf::from(input)
+    };
+    let path = path
         .canonicalize()
         .map_err(|error| format!("Open media: {error}"))?;
     Ok(path.to_string_lossy().trim_start_matches("\\\\?\\").into())
