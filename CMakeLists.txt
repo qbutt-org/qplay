@@ -50,6 +50,7 @@ qt_add_qml_module(qplay_views
         src/native/qml/PlayerIconButton.qml
         src/native/qml/PlayerScene.qml
         src/native/qml/SettingsPanel.qml
+        src/native/qml/SubtitleChoice.qml
     RESOURCES
         assets/icons/rewind-backward-10.svg
         assets/icons/rewind-forward-10.svg

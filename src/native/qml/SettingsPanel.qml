@@ -345,92 +345,19 @@ Popup {
                 color: root.textColor
                 font.pixelSize: 15
             }
-            ComboBox {
-                id: subtitleModel
+            SubtitleChoice {
                 objectName: "subtitleModel"
-                readonly property bool savedChoiceUnavailable: root.backend.subtitleModel.length > 0
-                    && root.backend.subtitleModels.indexOf(root.backend.subtitleModel) < 0
-                readonly property string unavailableLabel: (root.russian ? qsTr("Недоступно: %1") : qsTr("Unavailable: %1"))
-                    .arg(root.backend.subtitleModel)
                 Layout.fillWidth: true
                 Layout.topMargin: 5
-                implicitHeight: 44
-                enabled: root.backend.subtitleModels.length > 0
+                choices: root.backend.subtitleModels
+                selectedValue: root.backend.subtitleModel
+                russian: root.russian
+                dark: root.dark
+                textColor: root.textColor
+                mutedColor: root.mutedColor
+                optionColor: root.optionColor
                 Accessible.name: root.russian ? qsTr("Модель перевода") : qsTr("Translation model")
-                leftPadding: 12
-                rightPadding: 40
-                background: Rectangle {
-                    radius: 7
-                    color: root.optionColor
-                    border.color: subtitleModel.visualFocus ? "#009df7" : "transparent"
-                    border.width: 2
-                }
-                contentItem: Label {
-                    text: subtitleModel.displayText
-                    color: subtitleModel.enabled ? root.textColor : root.mutedColor
-                    verticalAlignment: Text.AlignVCenter
-                    elide: Text.ElideRight
-                }
-                indicator: Image {
-                    x: subtitleModel.width - width - 13
-                    y: (subtitleModel.height - height) / 2
-                    width: 18
-                    height: 18
-                    source: root.iconRoot + (root.dark ? "chevron-down.svg" : "chevron-down-dark.svg")
-                    opacity: subtitleModel.enabled ? 1 : 0.5
-                }
-                delegate: ItemDelegate {
-                    id: modelOption
-                    objectName: "subtitleModelOption" + index
-                    required property var modelData
-                    required property int index
-                    width: subtitleModel.width - 8
-                    implicitHeight: 40
-                    enabled: !subtitleModel.savedChoiceUnavailable || index !== 0
-                    text: modelData
-                    contentItem: Label {
-                        text: modelOption.text
-                        color: root.textColor
-                        verticalAlignment: Text.AlignVCenter
-                        elide: Text.ElideRight
-                    }
-                    background: Rectangle {
-                        radius: 5
-                        color: subtitleModel.highlightedIndex === modelOption.index
-                               ? (root.dark ? "#454b51" : "#dce8f3") : "transparent"
-                    }
-                }
-                popup: Popup {
-                    parent: root.host
-                    x: subtitleModel.mapToItem(root.host, 0, 0).x
-                    y: subtitleModel.mapToItem(root.host, 0, 0).y - implicitHeight - 4
-                    width: subtitleModel.width
-                    implicitHeight: Math.min(contentItem.implicitHeight + 8, 260)
-                    padding: 4
-                    contentItem: ListView {
-                        clip: true
-                        implicitHeight: contentHeight
-                        model: subtitleModel.delegateModel
-                        currentIndex: subtitleModel.highlightedIndex
-                        ScrollIndicator.vertical: ScrollIndicator { }
-                    }
-                    background: Rectangle {
-                        radius: 7
-                        color: root.dark ? "#303336" : "#f4f6f9"
-                        border.color: root.dark ? "#5b6065" : "#cbd5e0"
-                    }
-                }
-                model: (subtitleModel.savedChoiceUnavailable ? [subtitleModel.unavailableLabel] : [])
-                    .concat([root.russian ? qsTr("Авто") : qsTr("Auto")], root.backend.subtitleModels)
-                currentIndex: subtitleModel.savedChoiceUnavailable ? 0
-                              : root.backend.subtitleModel.length
-                                ? root.backend.subtitleModels.indexOf(root.backend.subtitleModel) + 1 : 0
-                onActivated: (index) => {
-                    if (subtitleModel.savedChoiceUnavailable && index === 0)
-                        return
-                    const choice = index - (subtitleModel.savedChoiceUnavailable ? 1 : 0)
-                    root.backend.changeSubtitleModel(choice === 0 ? "" : root.backend.subtitleModels[choice - 1])
-                }
+                onChoiceActivated: (value) => root.backend.changeSubtitleModel(value)
             }
             Label {
                 Layout.topMargin: 9
@@ -438,91 +365,19 @@ Popup {
                 color: root.textColor
                 font.pixelSize: 15
             }
-            ComboBox {
-                id: subtitleEffort
+            SubtitleChoice {
                 objectName: "subtitleEffort"
-                readonly property bool savedChoiceUnavailable: root.backend.subtitleEffort.length > 0
-                    && root.backend.subtitleEfforts.indexOf(root.backend.subtitleEffort) < 0
-                readonly property string unavailableLabel: (root.russian ? qsTr("Недоступно: %1") : qsTr("Unavailable: %1"))
-                    .arg(root.backend.subtitleEffort)
                 Layout.fillWidth: true
                 Layout.topMargin: 5
-                implicitHeight: 44
-                enabled: root.backend.subtitleEfforts.length > 0
+                choices: root.backend.subtitleEfforts
+                selectedValue: root.backend.subtitleEffort
+                russian: root.russian
+                dark: root.dark
+                textColor: root.textColor
+                mutedColor: root.mutedColor
+                optionColor: root.optionColor
                 Accessible.name: root.russian ? qsTr("Усилие модели") : qsTr("Model effort")
-                leftPadding: 12
-                rightPadding: 40
-                background: Rectangle {
-                    radius: 7
-                    color: root.optionColor
-                    border.color: subtitleEffort.visualFocus ? "#009df7" : "transparent"
-                    border.width: 2
-                }
-                contentItem: Label {
-                    text: subtitleEffort.displayText
-                    color: subtitleEffort.enabled ? root.textColor : root.mutedColor
-                    verticalAlignment: Text.AlignVCenter
-                    elide: Text.ElideRight
-                }
-                indicator: Image {
-                    x: subtitleEffort.width - width - 13
-                    y: (subtitleEffort.height - height) / 2
-                    width: 18
-                    height: 18
-                    source: root.iconRoot + (root.dark ? "chevron-down.svg" : "chevron-down-dark.svg")
-                    opacity: subtitleEffort.enabled ? 1 : 0.5
-                }
-                delegate: ItemDelegate {
-                    id: effortOption
-                    objectName: "subtitleEffortOption" + index
-                    required property var modelData
-                    required property int index
-                    width: subtitleEffort.width - 8
-                    implicitHeight: 40
-                    enabled: !subtitleEffort.savedChoiceUnavailable || index !== 0
-                    text: modelData
-                    contentItem: Label {
-                        text: effortOption.text
-                        color: root.textColor
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                    background: Rectangle {
-                        radius: 5
-                        color: subtitleEffort.highlightedIndex === effortOption.index
-                               ? (root.dark ? "#454b51" : "#dce8f3") : "transparent"
-                    }
-                }
-                popup: Popup {
-                    parent: root.host
-                    x: subtitleEffort.mapToItem(root.host, 0, 0).x
-                    y: subtitleEffort.mapToItem(root.host, 0, 0).y - implicitHeight - 4
-                    width: subtitleEffort.width
-                    implicitHeight: Math.min(contentItem.implicitHeight + 8, 260)
-                    padding: 4
-                    contentItem: ListView {
-                        clip: true
-                        implicitHeight: contentHeight
-                        model: subtitleEffort.delegateModel
-                        currentIndex: subtitleEffort.highlightedIndex
-                        ScrollIndicator.vertical: ScrollIndicator { }
-                    }
-                    background: Rectangle {
-                        radius: 7
-                        color: root.dark ? "#303336" : "#f4f6f9"
-                        border.color: root.dark ? "#5b6065" : "#cbd5e0"
-                    }
-                }
-                model: (subtitleEffort.savedChoiceUnavailable ? [subtitleEffort.unavailableLabel] : [])
-                    .concat([root.russian ? qsTr("Авто") : qsTr("Auto")], root.backend.subtitleEfforts)
-                currentIndex: subtitleEffort.savedChoiceUnavailable ? 0
-                              : root.backend.subtitleEffort.length
-                                ? root.backend.subtitleEfforts.indexOf(root.backend.subtitleEffort) + 1 : 0
-                onActivated: (index) => {
-                    if (subtitleEffort.savedChoiceUnavailable && index === 0)
-                        return
-                    const choice = index - (subtitleEffort.savedChoiceUnavailable ? 1 : 0)
-                    root.backend.changeSubtitleEffort(choice === 0 ? "" : root.backend.subtitleEfforts[choice - 1])
-                }
+                onChoiceActivated: (value) => root.backend.changeSubtitleEffort(value)
             }
             Label {
                 Layout.fillWidth: true
