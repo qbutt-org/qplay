@@ -13,7 +13,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
-use tokio::sync::watch;
+use tokio::sync::{OnceCell, watch};
 use tokio::time::timeout;
 
 use super::{SubtitleDocument, SubtitleError, SubtitleFormat, SubtitleIdentity};
@@ -64,6 +64,42 @@ impl VerifiedMediaTools {
                 .map_err(|_| SubtitleSourceError::Source)?,
             runtime_dir: runtime_dir.to_owned(),
         })
+    }
+}
+
+/// One local-file SHA-256 snapshot per loaded playback. A new load creates
+/// a new owner, so reopening a changed file cannot reuse the old digest.
+pub struct PlaybackMediaDigest {
+    path: PathBuf,
+    digest: OnceCell<String>,
+}
+
+impl PlaybackMediaDigest {
+    pub fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            digest: OnceCell::new(),
+        }
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub async fn get(
+        &self,
+        mut cancelled: watch::Receiver<bool>,
+    ) -> Result<String, SubtitleSourceError> {
+        if *cancelled.borrow() {
+            return Err(SubtitleSourceError::Cancelled);
+        }
+        let digest_cancelled = cancelled.clone();
+        tokio::select! {
+            result = self.digest.get_or_try_init(|| {
+                digest_local_media(&self.path, digest_cancelled)
+            }) => result.cloned(),
+            _ = cancelled.changed() => Err(SubtitleSourceError::Cancelled),
+        }
     }
 }
 
@@ -136,7 +172,7 @@ pub async fn digest_local_media(
         .await
         .map_err(|_| SubtitleSourceError::Source)?;
     let mut digest = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
+    let mut buffer = vec![0_u8; 64 * 1024];
     loop {
         if *cancelled.borrow() {
             return Err(SubtitleSourceError::Cancelled);

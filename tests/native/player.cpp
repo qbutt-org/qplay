@@ -185,6 +185,22 @@ int main(int argc, char *argv[])
             backend.changeLanguage(QStringLiteral("en"));
             backend.changeAppearance(QStringLiteral("dark"));
             backend.changeFramegen(QStringLiteral("off"));
+            QFile savedPreferences(preferences);
+            require(savedPreferences.open(QIODevice::ReadOnly), "Read saved player preferences failed");
+            auto settings = QJsonDocument::fromJson(savedPreferences.readAll()).object();
+            savedPreferences.close();
+            auto translation = settings.value(QStringLiteral("subtitle_translation")).toObject();
+            translation.insert(QStringLiteral("model"), QStringLiteral("retired-model"));
+            translation.insert(QStringLiteral("effort"), QStringLiteral("retired-effort"));
+            settings.insert(QStringLiteral("subtitle_translation"), translation);
+            require(savedPreferences.open(QIODevice::WriteOnly | QIODevice::Truncate)
+                    && savedPreferences.write(QJsonDocument(settings).toJson()) > 0,
+                "Save unavailable subtitle choices failed");
+            savedPreferences.close();
+            backend.configure(preferences, QStringLiteral("en_US"));
+            require(backend.subtitleModel() == QStringLiteral("retired-model")
+                && backend.subtitleEffort() == QStringLiteral("retired-effort"),
+                "Unavailable subtitle choices were not restored");
 
             QQuickRenderControl control;
             QQuickWindow window(&control);
@@ -477,8 +493,18 @@ int main(int argc, char *argv[])
             auto *modelChoice = findVisualItem(settingsContent, QStringLiteral("subtitleModel"));
             auto *effortChoice = findVisualItem(settingsContent, QStringLiteral("subtitleEffort"));
             require(modelChoice != nullptr && effortChoice != nullptr
-                && modelChoice->isEnabled() && effortChoice->isEnabled(),
-                "Model and effort selectors did not load");
+                && modelChoice->isEnabled() && !effortChoice->isEnabled(),
+                "Unavailable model did not leave available models selectable");
+            auto *modelText = qvariant_cast<QQuickItem *>(modelChoice->property("contentItem"));
+            auto *effortText = qvariant_cast<QQuickItem *>(effortChoice->property("contentItem"));
+            require(modelChoice->property("currentIndex").toInt() == 0
+                && effortChoice->property("currentIndex").toInt() == 0
+                && modelChoice->property("savedChoiceUnavailable").toBool()
+                && effortChoice->property("savedChoiceUnavailable").toBool()
+                && modelText != nullptr && effortText != nullptr
+                && modelText->property("text").toString().contains(QStringLiteral("retired-model"))
+                && effortText->property("text").toString().contains(QStringLiteral("retired-effort")),
+                "Unavailable saved choices were displayed as Auto");
             click(window, *modelChoice);
             auto *modelPopup = qvariant_cast<QObject *>(modelChoice->property("popup"));
             wait([&] { return modelPopup != nullptr && modelPopup->property("opened").toBool(); },
@@ -491,12 +517,30 @@ int main(int argc, char *argv[])
                 && modelOptions->mapToScene(QPointF(0, 0)).y() >= 0
                 && modelOptions->mapToScene(QPointF(0, modelOptions->height())).y() <= root->height(),
                 "Model selector extends outside the player");
-            auto *firstModel = findVisualItem(modelOptions, QStringLiteral("subtitleModelOption1"));
+            auto *firstModel = findVisualItem(modelOptions, QStringLiteral("subtitleModelOption2"));
             require(firstModel != nullptr, "First model choice unavailable");
             click(window, *firstModel);
             wait([&] { return backend.subtitleModel() == backend.subtitleModels().first(); },
                 "Model choice did not reach the controller");
             require(!modelPopup->property("opened").toBool(), "Model selector did not close after selection");
+            require(effortChoice->isEnabled(), "Available model did not enable effort selection");
+
+            require(savedPreferences.open(QIODevice::ReadOnly), "Read selected subtitle model failed");
+            settings = QJsonDocument::fromJson(savedPreferences.readAll()).object();
+            savedPreferences.close();
+            translation = settings.value(QStringLiteral("subtitle_translation")).toObject();
+            translation.insert(QStringLiteral("effort"), QStringLiteral("retired-effort"));
+            settings.insert(QStringLiteral("subtitle_translation"), translation);
+            require(savedPreferences.open(QIODevice::WriteOnly | QIODevice::Truncate)
+                    && savedPreferences.write(QJsonDocument(settings).toJson()) > 0,
+                "Save unavailable effort with an available model failed");
+            savedPreferences.close();
+            backend.configure(preferences, QStringLiteral("en_US"));
+            tick();
+            require(effortChoice->isEnabled()
+                && effortChoice->property("savedChoiceUnavailable").toBool()
+                && effortText->property("text").toString().contains(QStringLiteral("retired-effort")),
+                "Unavailable saved effort was displayed as Auto with an available model");
             click(window, *effortChoice);
             auto *effortPopup = qvariant_cast<QObject *>(effortChoice->property("popup"));
             wait([&] { return effortPopup != nullptr && effortPopup->property("opened").toBool(); },
@@ -506,7 +550,7 @@ int main(int argc, char *argv[])
                 && effortOptions->mapToScene(QPointF(0, 0)).y() >= 0
                 && effortOptions->mapToScene(QPointF(0, effortOptions->height())).y() <= root->height(),
                 "Effort selector extends outside the player");
-            auto *firstEffort = findVisualItem(effortOptions, QStringLiteral("subtitleEffortOption1"));
+            auto *firstEffort = findVisualItem(effortOptions, QStringLiteral("subtitleEffortOption2"));
             require(firstEffort != nullptr, "First effort choice unavailable");
             click(window, *firstEffort);
             wait([&] { return backend.subtitleEffort() == backend.subtitleEfforts().first(); },
@@ -570,6 +614,8 @@ int main(int argc, char *argv[])
                 {QStringLiteral("settingsDarkRendered"), true},
                 {QStringLiteral("subtitleTargetSelection"), true},
                 {QStringLiteral("subtitleToggleCancellation"), true},
+                {QStringLiteral("unavailableSubtitleModel"), true},
+                {QStringLiteral("unavailableSubtitleEffort"), true},
                 {QStringLiteral("subtitleModelCount"), backend.subtitleModels().size()},
                 {QStringLiteral("pendingCatalogCancellation"), pendingCatalogCancellation},
                 {QStringLiteral("stopReopen"), true},

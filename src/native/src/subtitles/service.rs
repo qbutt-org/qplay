@@ -3,6 +3,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::sync::watch;
@@ -29,15 +30,11 @@ pub enum SubtitleServiceError {
     Playback(#[source] std::io::Error),
 }
 
-struct State {
-    cache: SubtitleCache,
-    generation: u64,
-}
-
 /// One qplay owner serializes cache admission and guards player generations.
 /// Call methods on a worker; filesystem access must not block the Qt thread.
 pub struct SubtitleService {
-    state: Mutex<State>,
+    cache: Mutex<SubtitleCache>,
+    generation: AtomicU64,
     output_dir: PathBuf,
 }
 
@@ -48,10 +45,8 @@ impl SubtitleService {
             .map_err(|_| SubtitleServiceError::Unavailable)?
             .as_nanos();
         Ok(Self {
-            state: Mutex::new(State {
-                cache: SubtitleCache::new(data_dir)?,
-                generation: 0,
-            }),
+            cache: Mutex::new(SubtitleCache::new(data_dir)?),
+            generation: AtomicU64::new(0),
             output_dir: data_dir
                 .join("subtitle-session")
                 .join(format!("{}-{nonce}", std::process::id())),
@@ -72,15 +67,12 @@ impl SubtitleService {
         path.parent() == Some(self.output_dir.as_path())
     }
 
-    /// Change this on media/track change and seek. The caller cancels its old
-    /// Codex watch channel too; late responses cannot enter the accepted cache.
-    pub fn begin_generation(&self) -> Result<u64, SubtitleServiceError> {
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| SubtitleServiceError::Unavailable)?;
-        state.generation = state.generation.wrapping_add(1);
-        Ok(state.generation)
+    /// Qt only changes the generation atomically. Cache and file I/O stay on
+    /// workers, and every accepted cue is checked against this generation.
+    pub fn begin_generation(&self) -> u64 {
+        self.generation
+            .fetch_add(1, Ordering::SeqCst)
+            .wrapping_add(1)
     }
 
     /// Return only accepted text for the current read-ahead window.
@@ -92,11 +84,14 @@ impl SubtitleService {
         generation: u64,
     ) -> Result<HashMap<String, String>, SubtitleServiceError> {
         let (start, end) = window_bounds(position_ms)?;
-        let state = self
-            .state
+        if self.generation.load(Ordering::SeqCst) != generation {
+            return Err(SubtitleServiceError::Stale);
+        }
+        let cache = self
+            .cache
             .lock()
             .map_err(|_| SubtitleServiceError::Unavailable)?;
-        if state.generation != generation {
+        if self.generation.load(Ordering::SeqCst) != generation {
             return Err(SubtitleServiceError::Stale);
         }
         let mut accepted = HashMap::new();
@@ -105,7 +100,7 @@ impl SubtitleService {
             .iter()
             .filter(|fragment| fragment.end_ms > start && fragment.start_ms < end)
         {
-            if let Some(text) = state.cache.read(&options.key(fragment))? {
+            if let Some(text) = cache.read(&options.key(fragment))? {
                 accepted.insert(fragment.id.clone(), text);
             }
         }
@@ -125,11 +120,7 @@ impl SubtitleService {
             return Err(SubtitleServiceError::Unavailable);
         }
         let rendered = document.render(accepted)?;
-        let state = self
-            .state
-            .lock()
-            .map_err(|_| SubtitleServiceError::Unavailable)?;
-        if state.generation != generation {
+        if self.generation.load(Ordering::SeqCst) != generation {
             return Err(SubtitleServiceError::Stale);
         }
         fs::create_dir_all(path.parent().ok_or(SubtitleServiceError::Unavailable)?)
@@ -141,7 +132,11 @@ impl SubtitleService {
             .map_err(SubtitleServiceError::Playback)?;
         file.write_all(rendered.as_bytes())
             .map_err(SubtitleServiceError::Playback)?;
-        file.sync_all().map_err(SubtitleServiceError::Playback)
+        file.sync_all().map_err(SubtitleServiceError::Playback)?;
+        if self.generation.load(Ordering::SeqCst) != generation {
+            return Err(SubtitleServiceError::Stale);
+        }
+        Ok(())
     }
 
     /// Translate the next bounded uncached batch. `None` means every cue in
@@ -155,11 +150,11 @@ impl SubtitleService {
         cancelled: watch::Receiver<bool>,
     ) -> Result<Option<TranslatedSubtitleBatch>, SubtitleServiceError> {
         let batch = {
-            let state = self
-                .state
+            let cache = self
+                .cache
                 .lock()
                 .map_err(|_| SubtitleServiceError::Unavailable)?;
-            if state.generation != generation {
+            if self.generation.load(Ordering::SeqCst) != generation {
                 return Err(SubtitleServiceError::Stale);
             }
             let (start, end) = window_bounds(position_ms)?;
@@ -167,12 +162,15 @@ impl SubtitleService {
             for fragment in document.fragments().iter().filter(|fragment| {
                 fragment.end_ms > start.saturating_sub(45_000) && fragment.start_ms < end
             }) {
-                if let Some(text) = state.cache.read(&options.key(fragment))? {
+                if let Some(text) = cache.read(&options.key(fragment))? {
                     accepted.insert(fragment.id.clone(), text);
                 }
             }
             pending_batch(document, position_ms, &accepted)?
         };
+        if self.generation.load(Ordering::SeqCst) != generation {
+            return Err(SubtitleServiceError::Stale);
+        }
         if batch.fragments.is_empty() {
             return Ok(None);
         }
@@ -181,15 +179,17 @@ impl SubtitleService {
             return Err(qbutt_codex::CodexError::Cancelled.into());
         }
         {
-            let mut state = self
-                .state
+            let mut cache = self
+                .cache
                 .lock()
                 .map_err(|_| SubtitleServiceError::Unavailable)?;
-            if state.generation != generation {
-                return Err(SubtitleServiceError::Stale);
-            }
             for (key, text) in &result.accepted {
-                state.cache.accept(key, text)?;
+                // This check admits one cue. Cancellation after admission
+                // cannot make the GUI wait for the atomic file publication.
+                if self.generation.load(Ordering::SeqCst) != generation {
+                    return Err(SubtitleServiceError::Stale);
+                }
+                cache.accept(key, text)?;
             }
         }
         Ok(Some(result))

@@ -348,6 +348,10 @@ Popup {
             ComboBox {
                 id: subtitleModel
                 objectName: "subtitleModel"
+                readonly property bool savedChoiceUnavailable: root.backend.subtitleModel.length > 0
+                    && root.backend.subtitleModels.indexOf(root.backend.subtitleModel) < 0
+                readonly property string unavailableLabel: (root.russian ? qsTr("Недоступно: %1") : qsTr("Unavailable: %1"))
+                    .arg(root.backend.subtitleModel)
                 Layout.fillWidth: true
                 Layout.topMargin: 5
                 implicitHeight: 44
@@ -382,6 +386,7 @@ Popup {
                     required property int index
                     width: subtitleModel.width - 8
                     implicitHeight: 40
+                    enabled: !subtitleModel.savedChoiceUnavailable || index !== 0
                     text: modelData
                     contentItem: Label {
                         text: modelOption.text
@@ -415,9 +420,17 @@ Popup {
                         border.color: root.dark ? "#5b6065" : "#cbd5e0"
                     }
                 }
-                model: [root.russian ? qsTr("Авто") : qsTr("Auto")].concat(root.backend.subtitleModels)
-                currentIndex: root.backend.subtitleModel.length ? root.backend.subtitleModels.indexOf(root.backend.subtitleModel) + 1 : 0
-                onActivated: (index) => root.backend.changeSubtitleModel(index === 0 ? "" : root.backend.subtitleModels[index - 1])
+                model: (subtitleModel.savedChoiceUnavailable ? [subtitleModel.unavailableLabel] : [])
+                    .concat([root.russian ? qsTr("Авто") : qsTr("Auto")], root.backend.subtitleModels)
+                currentIndex: subtitleModel.savedChoiceUnavailable ? 0
+                              : root.backend.subtitleModel.length
+                                ? root.backend.subtitleModels.indexOf(root.backend.subtitleModel) + 1 : 0
+                onActivated: (index) => {
+                    if (subtitleModel.savedChoiceUnavailable && index === 0)
+                        return
+                    const choice = index - (subtitleModel.savedChoiceUnavailable ? 1 : 0)
+                    root.backend.changeSubtitleModel(choice === 0 ? "" : root.backend.subtitleModels[choice - 1])
+                }
             }
             Label {
                 Layout.topMargin: 9
@@ -428,6 +441,10 @@ Popup {
             ComboBox {
                 id: subtitleEffort
                 objectName: "subtitleEffort"
+                readonly property bool savedChoiceUnavailable: root.backend.subtitleEffort.length > 0
+                    && root.backend.subtitleEfforts.indexOf(root.backend.subtitleEffort) < 0
+                readonly property string unavailableLabel: (root.russian ? qsTr("Недоступно: %1") : qsTr("Unavailable: %1"))
+                    .arg(root.backend.subtitleEffort)
                 Layout.fillWidth: true
                 Layout.topMargin: 5
                 implicitHeight: 44
@@ -462,6 +479,7 @@ Popup {
                     required property int index
                     width: subtitleEffort.width - 8
                     implicitHeight: 40
+                    enabled: !subtitleEffort.savedChoiceUnavailable || index !== 0
                     text: modelData
                     contentItem: Label {
                         text: effortOption.text
@@ -494,9 +512,17 @@ Popup {
                         border.color: root.dark ? "#5b6065" : "#cbd5e0"
                     }
                 }
-                model: [root.russian ? qsTr("Авто") : qsTr("Auto")].concat(root.backend.subtitleEfforts)
-                currentIndex: root.backend.subtitleEffort.length ? root.backend.subtitleEfforts.indexOf(root.backend.subtitleEffort) + 1 : 0
-                onActivated: (index) => root.backend.changeSubtitleEffort(index === 0 ? "" : root.backend.subtitleEfforts[index - 1])
+                model: (subtitleEffort.savedChoiceUnavailable ? [subtitleEffort.unavailableLabel] : [])
+                    .concat([root.russian ? qsTr("Авто") : qsTr("Auto")], root.backend.subtitleEfforts)
+                currentIndex: subtitleEffort.savedChoiceUnavailable ? 0
+                              : root.backend.subtitleEffort.length
+                                ? root.backend.subtitleEfforts.indexOf(root.backend.subtitleEffort) + 1 : 0
+                onActivated: (index) => {
+                    if (subtitleEffort.savedChoiceUnavailable && index === 0)
+                        return
+                    const choice = index - (subtitleEffort.savedChoiceUnavailable ? 1 : 0)
+                    root.backend.changeSubtitleEffort(choice === 0 ? "" : root.backend.subtitleEfforts[choice - 1])
+                }
             }
             Label {
                 Layout.fillWidth: true

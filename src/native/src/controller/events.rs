@@ -1,4 +1,6 @@
+use std::path::PathBuf;
 use std::pin::Pin;
+use std::sync::Arc;
 
 use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::QString;
@@ -26,6 +28,7 @@ impl ffi::PlayerController {
                     state.subtitle_original_id = None;
                     state.subtitle_output_id = None;
                     state.subtitle_output_path = None;
+                    state.subtitle_media_digest = None;
                     state.subtitle_demuxer.clear();
                     state.subtitle_translation_view = state.subtitle_translation.enabled;
                     state.subtitle_status = "idle".into();
@@ -41,6 +44,11 @@ impl ffi::PlayerController {
                         }
                     }
                     let mut state = self.as_mut().rust_mut();
+                    state.subtitle_media_digest = state.media.as_ref().map(|media| {
+                        Arc::new(crate::subtitles::PlaybackMediaDigest::new(PathBuf::from(
+                            media,
+                        )))
+                    });
                     state.file_loaded = true;
                     state.error_text = QString::default();
                     state.state = ffi::State::Loading;
@@ -50,6 +58,7 @@ impl ffi::PlayerController {
                 Event::EndFile(error) => {
                     self.as_mut().cancel_subtitle_job();
                     self.as_mut().rust_mut().file_loaded = false;
+                    self.as_mut().rust_mut().subtitle_media_digest = None;
                     self.as_mut().rust_mut().subtitle_text.clear();
                     if error < 0
                         && (self.launch.ipc || self.media.as_ref() == Some(&self.observed_path))

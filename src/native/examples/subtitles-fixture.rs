@@ -5,10 +5,10 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use qplay_native::subtitles::{
-    MpvEmbeddedTrack, SubtitleCache, SubtitleDocument, SubtitleFormat, SubtitleIdentity,
-    SubtitleService, SubtitleServiceError, SubtitleSourceError, SubtitleTranslationOptions,
-    VerifiedMediaTools, digest_local_media, extract_local_embedded, pending_batch,
-    read_local_external, verify_embedded_track,
+    MpvEmbeddedTrack, PlaybackMediaDigest, SubtitleCache, SubtitleDocument, SubtitleFormat,
+    SubtitleIdentity, SubtitleService, SubtitleServiceError, SubtitleSourceError,
+    SubtitleTranslationOptions, VerifiedMediaTools, digest_local_media, extract_local_embedded,
+    pending_batch, read_local_external, verify_embedded_track,
 };
 use tokio::sync::watch;
 
@@ -113,7 +113,7 @@ async fn main() -> Result<()> {
         assert!(cache.read(&other_model)?.is_none());
         assert!(cache.read(&other_target)?.is_none());
         let service = SubtitleService::new(&profile)?;
-        let generation = service.begin_generation()?;
+        let generation = service.begin_generation();
         assert_eq!(
             service.cached_window(&changed_header, 1_000, &options, generation)?,
             HashMap::from([(first.id.clone(), "Привет".into())])
@@ -142,9 +142,13 @@ async fn main() -> Result<()> {
                 .len(),
             1
         );
-        let new_generation = service.begin_generation()?;
+        let new_generation = service.begin_generation();
         assert!(matches!(
             service.cached_window(&document, 1_000, &options, generation),
+            Err(SubtitleServiceError::Stale)
+        ));
+        assert!(matches!(
+            service.publish_window(&document, &translated, &output, generation),
             Err(SubtitleServiceError::Stale)
         ));
         assert!(new_generation > generation);
@@ -164,7 +168,7 @@ async fn main() -> Result<()> {
     result?;
 
     let service = SubtitleService::new(&std::env::temp_dir())?;
-    let generation = service.begin_generation()?;
+    let generation = service.begin_generation();
     let options = SubtitleTranslationOptions {
         identity: SubtitleIdentity {
             media_digest: "c".repeat(64),
@@ -234,6 +238,27 @@ async fn media_fixture(library: &Path) -> Result<()> {
         assert!(status.success());
         let (_sender, cancelled) = watch::channel(false);
         assert_eq!(digest_local_media(&media, cancelled).await?.len(), 64);
+        let identity_file = directory.join("identity.bin");
+        std::fs::write(&identity_file, b"first media generation")?;
+        let playback = PlaybackMediaDigest::new(identity_file.clone());
+        let (_sender, cancelled) = watch::channel(true);
+        assert!(matches!(
+            playback.get(cancelled).await,
+            Err(SubtitleSourceError::Cancelled)
+        ));
+        let (_sender, cancelled) = watch::channel(false);
+        let (first_digest, shared_digest) = tokio::join!(
+            playback.get(cancelled.clone()),
+            playback.get(cancelled)
+        );
+        let first_digest = first_digest?;
+        assert_eq!(shared_digest?, first_digest);
+        std::fs::write(&identity_file, b"reopened media generation")?;
+        let (_sender, cancelled) = watch::channel(false);
+        assert_eq!(playback.get(cancelled).await?, first_digest);
+        let reopened = PlaybackMediaDigest::new(identity_file);
+        let (_sender, cancelled) = watch::channel(false);
+        assert_ne!(reopened.get(cancelled).await?, first_digest);
         let selected = MpvEmbeddedTrack {
             mpv_id: 2,
             ff_index: Some(1),

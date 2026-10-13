@@ -10,8 +10,8 @@ use tokio::sync::watch;
 use super::ffi;
 use crate::preferences::SubtitleTranslationPreferences;
 use crate::subtitles::{
-    MpvEmbeddedTrack, SubtitleFormat, SubtitleIdentity, SubtitleService, SubtitleSourceError,
-    SubtitleTranslationOptions, VerifiedMediaTools, digest_local_media, extract_local_embedded,
+    MpvEmbeddedTrack, PlaybackMediaDigest, SubtitleFormat, SubtitleIdentity, SubtitleService,
+    SubtitleSourceError, SubtitleTranslationOptions, VerifiedMediaTools, extract_local_embedded,
     read_local_external, verify_embedded_track, window_bounds,
 };
 use crate::track_model::Track;
@@ -29,7 +29,7 @@ enum Operation {
 struct WindowTask {
     service: Arc<SubtitleService>,
     generation: u64,
-    media: PathBuf,
+    media_digest: Arc<PlaybackMediaDigest>,
     library: PathBuf,
     track: Track,
     demuxer: String,
@@ -115,9 +115,12 @@ async fn translate_window(
         ) => result.map_err(codex_status)?,
         _ = selection_cancel.changed() => return Err("cancelled"),
     };
-    let digest = digest_local_media(&task.media, task.cancelled.clone())
+    let digest = task
+        .media_digest
+        .get(task.cancelled.clone())
         .await
         .map_err(source_status)?;
+    let media = task.media_digest.path();
     let (document, identity) = if task.track.external {
         let source = task.track.external_filename.as_ref().ok_or("unsupported")?;
         let path = Path::new(source);
@@ -141,20 +144,14 @@ async fn translate_window(
             current_demuxer: task.demuxer,
             origin_ms: task.origin_ms,
         };
-        let track = verify_embedded_track(&task.media, &tools, &selected, task.cancelled.clone())
+        let track = verify_embedded_track(media, &tools, &selected, task.cancelled.clone())
             .await
             .map_err(source_status)?;
         let (start, end) = window_bounds(task.position_ms).map_err(|_| "unsupported")?;
-        let document = extract_local_embedded(
-            &task.media,
-            &tools,
-            &track,
-            start,
-            end,
-            task.cancelled.clone(),
-        )
-        .await
-        .map_err(source_status)?;
+        let document =
+            extract_local_embedded(media, &tools, &track, start, end, task.cancelled.clone())
+                .await
+                .map_err(source_status)?;
         let identity = track.identity(digest);
         (document, identity)
     };
@@ -419,15 +416,14 @@ impl ffi::PlayerController {
     }
 
     pub(super) fn cancel_subtitle_job(mut self: Pin<&mut Self>) {
+        if let Some(service) = &self.subtitle_service {
+            let generation = service.begin_generation();
+            self.as_mut().rust_mut().subtitle_task_generation = generation;
+        }
         if let Some(cancel) = self.as_mut().rust_mut().subtitle_task_cancel.take() {
             let _ = cancel.send(true);
         }
         self.as_mut().rust_mut().subtitle_commands.clear();
-        if let Some(service) = &self.subtitle_service {
-            if let Ok(generation) = service.begin_generation() {
-                self.as_mut().rust_mut().subtitle_task_generation = generation;
-            }
-        }
         self.as_mut().rust_mut().subtitle_window_start_ms = None;
     }
 
@@ -465,10 +461,10 @@ impl ffi::PlayerController {
         if !track.external && self.subtitle_demuxer.is_empty() {
             return;
         }
-        let (Some(service), Some(library), Some(media)) = (
+        let (Some(service), Some(library), Some(media_digest)) = (
             self.subtitle_service.clone(),
             self.subtitle_library.clone(),
-            self.media.clone(),
+            self.subtitle_media_digest.clone(),
         ) else {
             self.as_mut().rust_mut().subtitle_status = "unavailable".into();
             self.as_mut().state_changed();
@@ -496,7 +492,7 @@ impl ffi::PlayerController {
         let task = WindowTask {
             service,
             generation,
-            media: PathBuf::from(media),
+            media_digest,
             library,
             track,
             demuxer: self.subtitle_demuxer.clone(),
