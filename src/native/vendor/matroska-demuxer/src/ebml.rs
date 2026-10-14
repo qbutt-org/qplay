@@ -496,7 +496,16 @@ pub(crate) fn parse_element_header<R: Read + Seek>(
     let id = parse_variable_u32(r)?;
     let element_id = id_to_element_id(id);
 
-    let size = parse_variable_u64(r)?;
+    let size_offset = r.stream_position()?;
+    let value = parse_variable_u64(r)?;
+    let width = r.stream_position()? - size_offset;
+    // All-one VINT data means unknown only for Element Data Size, not integers
+    // such as Block TrackNumber or an EBML-laced frame size.
+    let size = if value == (1_u64 << (7 * width)) - 1 {
+        u64::MAX
+    } else {
+        value
+    };
     Ok((element_id, size))
 }
 
@@ -541,12 +550,11 @@ pub(crate) fn parse_variable_i64<R: Read>(r: &mut R) -> Result<i64> {
     }
 }
 
-/// Parses a variable length EBML u64 (as used for the data size).
+/// Parses the numeric value of an EBML VINT, without Element Data Size semantics.
 pub(crate) fn parse_variable_u64<R: Read>(r: &mut R) -> Result<u64> {
     let mut bytes = [0u8];
     r.read_exact(&mut bytes)?;
-    let size = match bytes[0] {
-        0xFF => u64::MAX,
+    let value = match bytes[0] {
         byte if (byte & 0x80) == 0x80 => (0x7F & byte).into(),
         byte if (byte & 0xC0) == 0x40 => parse_variable_u64_data(r, 0x3F & byte, 1)?,
         byte if (byte & 0xE0) == 0x20 => parse_variable_u64_data(r, 0x1F & byte, 2)?,
@@ -557,7 +565,7 @@ pub(crate) fn parse_variable_u64<R: Read>(r: &mut R) -> Result<u64> {
         0x01 => parse_variable_u64_data(r, 0, 7)?,
         _ => return Err(DemuxError::InvalidEbmlDataSize),
     };
-    Ok(size)
+    Ok(value)
 }
 
 fn parse_variable_u32_data<R: Read>(r: &mut R, byte: u8, left: u8) -> Result<u32> {

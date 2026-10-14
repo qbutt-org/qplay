@@ -45,12 +45,6 @@ const info = element([0x15, 0x49, 0xa9, 0x66], bytes(
     element([0x4d, 0x80], text("qplay-generated")), element([0x57, 0x41], text("qplay-generated")),
 ));
 const assHeader = "[Script Info]\nScriptType: v4.00+\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize\nStyle: Default,Arial,20\n";
-const tracks = element([0x16, 0x54, 0xae, 0x6b], bytes(...[1, 2, 3].map(track => element([0xae], bytes(
-    element([0xd7], unsigned(track)), element([0x73, 0xc5], unsigned(track)),
-    element([0x83], Uint8Array.of(track === 1 ? 1 : 17)),
-    element([0x86], text(track === 1 ? "V_MPEG4/ISO/AVC" : "S_TEXT/ASS")),
-    ...(track === 1 ? [] : [element([0x63, 0xa2], text(assHeader))]),
-)))));
 
 function subtitle(track: number, duration: number, body: string): Uint8Array {
     return element([0xa0], bytes(
@@ -64,14 +58,22 @@ type ContainerOptions = {
     index?: "subtitles" | "video" | "none";
     clusterCount?: number;
     selectedSecond?: number;
-    unknownClusterSize?: boolean;
+    unknownClusterWidth?: number;
+    videoTrack?: number;
+    subtitleTrack?: number;
     fault?: "track" | "size";
 };
 
 function container(videoBytes: number, {
     index = "subtitles", clusterCount = 7_200, selectedSecond = 6_001,
-    unknownClusterSize = false, fault,
+    unknownClusterWidth = 0, videoTrack = 1, subtitleTrack = 3, fault,
 }: ContainerOptions = {}): { length: number; parts: Part[] } {
+    const tracks = element([0x16, 0x54, 0xae, 0x6b], bytes(...[videoTrack, 2, subtitleTrack].map(track => element([0xae], bytes(
+        element([0xd7], unsigned(track)), element([0x73, 0xc5], unsigned(track)),
+        element([0x83], Uint8Array.of(track === videoTrack ? 1 : 17)),
+        element([0x86], text(track === videoTrack ? "V_MPEG4/ISO/AVC" : "S_TEXT/ASS")),
+        ...(track === videoTrack ? [] : [element([0x63, 0xa2], text(assHeader))]),
+    )))));
     const parts: Part[] = [];
     const seekEntry = (id: number[], offset: number) => element([0x4d, 0xbb], bytes(
         element([0x53, 0xab], Uint8Array.from(id)), element([0x53, 0xac], unsigned(offset)),
@@ -89,7 +91,7 @@ function container(videoBytes: number, {
     const cue = (timestamp: number, clusterPosition: number, relativePosition: number, duration: number) => element([0xbb], bytes(
         element([0xb3], unsigned(timestamp)),
         element([0xb7], bytes(
-            element([0xf7], unsigned(index === "video" ? 1 : 3)),
+            element([0xf7], unsigned(index === "video" ? videoTrack : subtitleTrack)),
             element([0xf1], unsigned(clusterPosition)),
             element([0xf0], unsigned(relativePosition)),
             element([0xb2], unsigned(duration)),
@@ -102,16 +104,18 @@ function container(videoBytes: number, {
         const wrong = second === 1 ? subtitle(2, 6_499_000, "0,0,Default,,0,0,0,,Wrong track") : new Uint8Array();
         let selected = new Uint8Array();
         if (second === 1)
-            selected = subtitle(3, 6_499_000, "0,0,Default,,0,0,0,,{\\an8}Long overlapping cue");
+            selected = subtitle(subtitleTrack, 6_499_000, "0,0,Default,,0,0,0,,{\\an8}Long overlapping cue");
         else if (second === selectedSecond)
-            selected = subtitle(fault === "track" ? 0 : 3, 2_000, "1,0,Default,,0,0,0,,Selected track after seek");
+            selected = subtitle(fault === "track" ? 0 : subtitleTrack, 2_000, "1,0,Default,,0,0,0,,Selected track after seek");
         const malformed = second === selectedSecond && fault === "size"
             ? element([0xa0], bytes(Uint8Array.of(0xa1, 0x89, 0x83, 0, 0, 0))) : new Uint8Array();
         const subtitleData = bytes(second === 1 ? wrong : new Uint8Array(), selected, malformed);
-        const block = bytes(Uint8Array.of(0xa3), size(videoBytes + 4), Uint8Array.of(0x81, 0, 0, 0));
-        const clusterSize = unknownClusterSize
-            ? Uint8Array.of(0xff)
+        const block = bytes(Uint8Array.of(0xa3), size(videoBytes + 4), Uint8Array.of(0x80 | videoTrack, 0, 0, 0));
+        const clusterSize = unknownClusterWidth
+            ? new Uint8Array(unknownClusterWidth).fill(0xff)
             : size(timestamp.length + block.length + videoBytes + subtitleData.length);
+        if (unknownClusterWidth)
+            clusterSize[0] >>>= unknownClusterWidth - 1;
         const cluster = bytes(Uint8Array.of(0x1f, 0x43, 0xb6, 0x75), clusterSize);
         parts.push({ offset, data: bytes(cluster, timestamp, block) });
         offset += cluster.length + timestamp.length + block.length + videoBytes;
@@ -140,14 +144,26 @@ const unindexed = container(1024 * 1024, { ...shortLayout, index: "none" });
 const sources = new Map([
     ["sparse.mkv", container(1024 * 1024)],
     ["unindexed.mkv", unindexed],
+    ["known-size-127.mkv", container(111, { ...shortLayout, index: "none" })],
     ["video-index.mkv", container(1024 * 1024, { ...shortLayout, index: "video" })],
-    ["unknown-clusters.mkv", container(1024 * 1024, { ...shortLayout, index: "none", unknownClusterSize: true })],
+    ["unknown-clusters.mkv", container(1024 * 1024, { ...shortLayout, index: "none", unknownClusterWidth: 1 })],
     ["changed.mkv", unindexed],
     ["slow.mkv", unindexed],
     ["track.mkv", container(1024 * 1024, { ...shortLayout, index: "none", fault: "track" })],
     ["size.mkv", container(1024 * 1024, { ...shortLayout, index: "none", fault: "size" })],
     ["budget.mkv", container(1024 * 1024, { clusterCount: 600, selectedSecond: 121, index: "none" })],
 ]);
+for (let width = 2; width <= 8; width++) {
+    sources.set(`unknown-clusters-${width}.mkv`, container(1024 * 1024, {
+        ...shortLayout, index: "none", unknownClusterWidth: width,
+    }));
+}
+sources.set("video-track-127.mkv", container(1024 * 1024, {
+    ...shortLayout, index: "none", videoTrack: 127,
+}));
+sources.set("subtitle-track-127.mkv", container(1024 * 1024, {
+    ...shortLayout, index: "none", subtitleTrack: 127,
+}));
 let slowClosed = false;
 const measurements = new Map<string, { requests: number; receivedBytes: number; representationBytes: number }>();
 const server = Bun.serve({
@@ -200,9 +216,11 @@ const server = Bun.serve({
 try {
     const cases: unknown[] = [];
     const profile = resolve(evidenceFile + ".profile");
-    const run = async (name: string, expected: string, start: number, end: number, mode?: string, token = "0123456789abcdef0123456789abcdef") => {
+    const run = async (name: string, expected: string, start: number, end: number, {
+        mode, token = "0123456789abcdef0123456789abcdef", track = 3,
+    }: { mode?: "seed" | "offline"; token?: string; track?: number } = {}) => {
         const url = new URL(`media/${token}/${name}`, server.url).href;
-        const child = Bun.spawn([resolve(executable), url, "3", expected, "ass", String(start), String(end),
+        const child = Bun.spawn([resolve(executable), url, String(track), expected, "ass", String(start), String(end),
             ...(mode ? [profile, mode] : [])], {
             stdout: "pipe", stderr: "pipe", windowsHide: true,
             env: { ...process.env, Path: `${resolve(qtDirectory, "bin")};${process.env.Path ?? process.env.PATH ?? ""}` },
@@ -218,10 +236,15 @@ try {
         return result[0];
     };
     await run("sparse.mkv", "Selected track after seek", 6_001_000, 6_005_000);
+    await run("known-size-127.mkv", "Selected track after seek", 121_000, 125_000);
     await run("video-index.mkv", "Selected track after seek", 121_000, 125_000);
     await run("unknown-clusters.mkv", "Selected track after seek", 121_000, 125_000);
-    const seeded = await run("unindexed.mkv", "Selected track after seek", 121_000, 125_000, "seed");
-    const reopened = await run("unindexed.mkv", "Selected track after seek", 121_000, 125_000, "offline", "fedcba9876543210fedcba9876543210");
+    for (let width = 2; width <= 8; width++)
+        await run(`unknown-clusters-${width}.mkv`, "Selected track after seek", 121_000, 125_000);
+    await run("video-track-127.mkv", "Selected track after seek", 121_000, 125_000);
+    await run("subtitle-track-127.mkv", "Selected track after seek", 121_000, 125_000, { track: 127 });
+    const seeded = await run("unindexed.mkv", "Selected track after seek", 121_000, 125_000, { mode: "seed" });
+    const reopened = await run("unindexed.mkv", "Selected track after seek", 121_000, 125_000, { mode: "offline", token: "fedcba9876543210fedcba9876543210" });
     if (seeded.mediaDigest !== reopened.mediaDigest || seeded.sourceDigest !== reopened.sourceDigest)
         throw new Error("Capability URL changed exact cache identity");
     for (const name of ["changed.mkv", "track.mkv", "size.mkv", "budget.mkv"]) {

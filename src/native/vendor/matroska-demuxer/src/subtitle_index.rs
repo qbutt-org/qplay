@@ -108,7 +108,6 @@ pub(crate) fn scan<R: Read + Seek>(
                     .checked_add(block.size)
                     .ok_or(DemuxError::InvalidBlockSize)?;
                 if block_track == 0
-                    || block_track == u64::MAX
                     || file
                         .stream_position()?
                         .checked_add(3)

@@ -1,5 +1,5 @@
 diff --git a/src/ebml.rs b/src/ebml.rs
-index b34ea3b..99f63eb 100644
+index b34ea3b..a48d86d 100644
 --- a/src/ebml.rs
 +++ b/src/ebml.rs
 @@ -4 +4 @@ use std::{
@@ -39,7 +39,29 @@ index b34ea3b..99f63eb 100644
 @@ -402 +425 @@ pub(crate) fn try_find_binary<R: Read + Seek>(
 -            let size = usize::try_from(*size)?;
 +            let size = checked_allocation_size(*size, MAX_METADATA_BYTES)?;
-@@ -641 +664 @@ fn parse_string<R: Read + Seek>(r: &mut R, size: u64) -> Result<String> {
+@@ -476 +499,10 @@ pub(crate) fn parse_element_header<R: Read + Seek>(
+-    let size = parse_variable_u64(r)?;
++    let size_offset = r.stream_position()?;
++    let value = parse_variable_u64(r)?;
++    let width = r.stream_position()? - size_offset;
++    // All-one VINT data means unknown only for Element Data Size, not integers
++    // such as Block TrackNumber or an EBML-laced frame size.
++    let size = if value == (1_u64 << (7 * width)) - 1 {
++        u64::MAX
++    } else {
++        value
++    };
+@@ -521 +553 @@ pub(crate) fn parse_variable_i64<R: Read>(r: &mut R) -> Result<i64> {
+-/// Parses a variable length EBML u64 (as used for the data size).
++/// Parses the numeric value of an EBML VINT, without Element Data Size semantics.
+@@ -525,2 +557 @@ pub(crate) fn parse_variable_u64<R: Read>(r: &mut R) -> Result<u64> {
+-    let size = match bytes[0] {
+-        0xFF => u64::MAX,
++    let value = match bytes[0] {
+@@ -537 +568 @@ pub(crate) fn parse_variable_u64<R: Read>(r: &mut R) -> Result<u64> {
+-    Ok(size)
++    Ok(value)
+@@ -641 +672 @@ fn parse_string<R: Read + Seek>(r: &mut R, size: u64) -> Result<String> {
 -    let size: usize = size.try_into()?;
 +    let size = checked_allocation_size(size, MAX_METADATA_BYTES)?;
 diff --git a/src/error.rs b/src/error.rs
@@ -327,10 +349,10 @@ index 8ece7eb..90f5c75 100644
 +                    if let Some(relative_position) = position.relative_position {
 diff --git a/src/subtitle_index.rs b/src/subtitle_index.rs
 new file mode 100644
-index 0000000..fac72c4
+index 0000000..61f37b2
 --- /dev/null
 +++ b/src/subtitle_index.rs
-@@ -0,0 +1,188 @@
+@@ -0,0 +1,187 @@
 +//! Exact subtitle block discovery when a track has no complete Cue index.
 +
 +use std::io::{Read, Seek, SeekFrom};
@@ -441,7 +463,6 @@ index 0000000..fac72c4
 +                    .checked_add(block.size)
 +                    .ok_or(DemuxError::InvalidBlockSize)?;
 +                if block_track == 0
-+                    || block_track == u64::MAX
 +                    || file
 +                        .stream_position()?
 +                        .checked_add(3)
