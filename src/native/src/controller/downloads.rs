@@ -34,7 +34,8 @@ impl ffi::PlayerController {
     }
 
     pub(super) fn receive_download_message(mut self: Pin<&mut Self>, arguments: &[String]) {
-        if !self.launch.ipc || !self.launch.external_downloads || arguments.len() != 3 {
+        if self.launch.ipc_path.is_none() || !self.launch.external_downloads || arguments.len() != 3
+        {
             return;
         }
         let token = &arguments[1];

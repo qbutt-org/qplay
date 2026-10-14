@@ -34,6 +34,7 @@
 #include <QUrl>
 
 #include "downloads.h"
+#include "startup.h"
 
 #include "qplay_native/src/controller.cxxqt.h"
 #include "qplay_native/src/track_model.cxxqt.h"
@@ -296,6 +297,16 @@ int main(int argc, char *argv[])
                 mismatch.initialize(incorrectLibrary, QDir(profile).absoluteFilePath(QStringLiteral("mismatch")));
                 wait([&] { return !mismatch.errorText().isEmpty(); }, "Engine hash fault did not arrive");
                 require(!mismatch.engineReady(), "An untrusted engine became ready");
+            }
+
+            if (qEnvironmentVariableIsSet("QPLAY_STARTUP_RENDER_QA"))
+            {
+                evidence = exerciseStartup(backend, library, media, secondMedia, profile, tick);
+                evidence[QStringLiteral("exitCode")] = 0;
+                QFile output(evidencePrefix + QStringLiteral(".json"));
+                require(output.open(QIODevice::WriteOnly), "Write startup evidence failed");
+                output.write(QJsonDocument(evidence).toJson());
+                return 0;
             }
 
             backend.initialize(library + QStringLiteral(".missing"), profile);

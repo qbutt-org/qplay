@@ -67,25 +67,33 @@ if (timedOut || exitCode !== 0) {
 }
 
 const evidence = JSON.parse(await readFile(`${evidencePrefix}.json`, "utf8"));
+const startupQa = Boolean(process.env.QPLAY_STARTUP_RENDER_QA);
 
-if (evidence.exitCode !== 0 || !evidence.pauseSeekResume || !evidence.playbackMenuOpened
-    || !evidence.speedSubmenuOpened || !evidence.speedPresetApplied
-    || !evidence.settingsLightRendered || !evidence.settingsDarkRendered
-    || !evidence.closeDuringStartup || evidence.ownedChildren !== 0) {
+const accepted = startupQa
+    ? evidence.mediaWaitedForRender && evidence.ipcWaitedForRender
+        && evidence.startupVideo?.w > 0 && evidence.ipcReplacementVideo?.w > 0
+    : evidence.pauseSeekResume && evidence.playbackMenuOpened
+        && evidence.speedSubmenuOpened && evidence.speedPresetApplied
+        && evidence.settingsLightRendered && evidence.settingsDarkRendered
+        && evidence.closeDuringStartup && evidence.ownedChildren === 0;
+if (evidence.exitCode !== 0 || !accepted) {
     throw new Error("The native process did not confirm the required playback and lifetime scenario.");
 }
 
 const digest = async (path: string) => createHash("sha256").update(await readFile(path)).digest("hex");
-const receipt = {
-    command: [executable, ...argumentsList],
-    engineSha256: await digest(library),
-    executableSha256: await digest(executable),
-    mediaSha256: await digest(resolve(mediaFile)),
+const renders = startupQa ? {} : {
     frameSha256: await digest(`${evidencePrefix}.png`),
     menuFrameSha256: await digest(`${evidencePrefix}.menu.png`),
     speedFrameSha256: await digest(`${evidencePrefix}.speed.png`),
     settingsLightFrameSha256: await digest(`${evidencePrefix}.settings-light.png`),
     settingsDarkFrameSha256: await digest(`${evidencePrefix}.settings-dark.png`),
+};
+const receipt = {
+    command: [executable, ...argumentsList],
+    engineSha256: await digest(library),
+    executableSha256: await digest(executable),
+    mediaSha256: await digest(resolve(mediaFile)),
+    ...renders,
     evidence,
 };
 

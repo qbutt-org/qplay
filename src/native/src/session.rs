@@ -425,6 +425,10 @@ impl RenderLease {
                 (&*self.wakeup as *const FrameWakeup).cast_mut().cast(),
             );
         }
+        let generation = self.session.generation;
+        let _ = self.wakeup.thread.queue(move |mut player| {
+            player.as_mut().surface_ready(generation);
+        });
         Ok(())
     }
 

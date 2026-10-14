@@ -4,7 +4,7 @@ use crate::gpu::content::ContentChoice;
 
 #[derive(Clone, Default)]
 pub struct LaunchOptions {
-    pub ipc: bool,
+    pub ipc_path: Option<String>,
     pub external_downloads: bool,
     pub ytdl_path: Option<String>,
     pub content: Option<ContentChoice>,
@@ -42,8 +42,7 @@ impl LaunchOptions {
                     if !value.starts_with(r"\\.\pipe\qbutt-mpv-") || value.len() > 256 {
                         return Err("Invalid player IPC path.".into());
                     }
-                    launch.ipc = true;
-                    launch.options.push((name.into(), value.into()));
+                    launch.ipc_path = Some(value.into());
                 }
                 "idle"
                 | "terminal"

@@ -88,8 +88,6 @@ pub fn run_start_task(task: Box<StartTask>) {
                         .as_mut()
                         .dispatch(&["set", "audio-delay", &delay.to_string()]);
                 }
-                // Load a startup request before IPC events record externally loaded media.
-                player.as_mut().load_pending_media();
                 player.as_mut().drain_events();
                 player.as_mut().state_changed();
             }
@@ -264,6 +262,7 @@ impl ffi::PlayerController {
         state.online_progress = -1;
         state.online_error = None;
         state.engine_ready = false;
+        state.render_ready = false;
         state.file_loaded = false;
         state.pending_commands.clear();
         state.gpu_commands.clear();
@@ -290,6 +289,19 @@ impl ffi::PlayerController {
         };
         ffi::start_session(Box::new(task));
         self.as_mut().state_changed();
+    }
+
+    pub(crate) fn surface_ready(mut self: Pin<&mut Self>, generation: u64) {
+        if self.generation != generation || self.render_ready || !self.engine_ready {
+            return;
+        }
+        self.as_mut().rust_mut().render_ready = true;
+        // libmpv disables video if loadfile arrives before its render context.
+        // Queue our initial media before exposing the same session to IPC clients.
+        self.as_mut().load_pending_media();
+        if let Some(path) = self.launch.ipc_path.clone() {
+            self.dispatch(&["set", "input-ipc-server", &path]);
+        }
     }
 
     pub(crate) fn surface_failed(mut self: Pin<&mut Self>, generation: u64, error: &QString) {

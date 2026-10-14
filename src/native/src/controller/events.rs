@@ -40,7 +40,7 @@ impl ffi::PlayerController {
                     self.as_mut().dispatch(&["set", "sub-pos", "100"]);
                 }
                 Event::FileLoaded => {
-                    if self.launch.ipc {
+                    if self.launch.ipc_path.is_some() {
                         if let Some(path) = session.text("path") {
                             self.as_mut().rust_mut().media = Some(path.clone());
                             self.as_mut().rust_mut().observed_path = path;
@@ -86,7 +86,8 @@ impl ffi::PlayerController {
                     self.as_mut().rust_mut().subtitle_media = None;
                     self.as_mut().rust_mut().subtitle_text.clear();
                     if error < 0
-                        && (self.launch.ipc || self.media.as_ref() == Some(&self.observed_path))
+                        && (self.launch.ipc_path.is_some()
+                            || self.media.as_ref() == Some(&self.observed_path))
                     {
                         self.as_mut().fail(session.error(error));
                     } else if self.state != ffi::State::Failed {
@@ -134,6 +135,7 @@ impl ffi::PlayerController {
                     self.as_mut().cancel_subtitle_job();
                     let mut state = self.as_mut().rust_mut();
                     state.engine_ready = false;
+                    state.render_ready = false;
                     state.file_loaded = false;
                     state.subtitle_text.clear();
                     state.session = None;

@@ -96,6 +96,8 @@ qt_add_executable(qplay-native-acceptance WIN32
     tests/native/player.cpp
     tests/native/downloads.cpp
     tests/native/downloads.h
+    tests/native/startup.cpp
+    tests/native/startup.h
 )
 target_link_libraries(qplay-native-acceptance
     PRIVATE qplay_views qplay_viewsplugin qplay_native qplay_player_plugin Qt::Network bcrypt

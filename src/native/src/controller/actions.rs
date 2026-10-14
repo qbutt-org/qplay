@@ -25,7 +25,7 @@ impl ffi::PlayerController {
     }
 
     pub(super) fn load_pending_media(mut self: Pin<&mut Self>) {
-        if self.session.is_none() {
+        if !self.render_ready {
             return;
         }
         let Some(media) = self.media.clone() else {
