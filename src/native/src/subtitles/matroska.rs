@@ -1,4 +1,4 @@
-//! Indexed embedded text acquisition without reading the video payload.
+//! Bounded embedded text acquisition without reading the video payload.
 
 use std::sync::Arc;
 
@@ -14,7 +14,7 @@ use super::{
 
 const MAX_WINDOW_CUES: usize = 2_000;
 
-pub async fn extract_indexed_matroska(
+pub async fn extract_network_matroska(
     media: Arc<PlaybackMedia>,
     selected: MpvEmbeddedTrack,
     start_ms: i64,
@@ -142,7 +142,7 @@ fn extract(
 
     let cues = matroska
         .subtitle_cues(track_number)
-        .ok_or(SubtitleSourceError::TrackMapping)?;
+        .map_err(|_| SubtitleSourceError::Extraction)?;
     let mut cue_count = 0;
     let mut frame = Frame::default();
     for cue in cues {

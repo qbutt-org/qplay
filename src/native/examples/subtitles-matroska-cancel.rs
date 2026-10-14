@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use qplay_native::subtitles::{
-    MpvEmbeddedTrack, PlaybackMedia, SubtitleSourceError, extract_indexed_matroska,
+    MpvEmbeddedTrack, PlaybackMedia, SubtitleSourceError, extract_network_matroska,
 };
 use tokio::sync::watch;
 
@@ -21,7 +21,7 @@ async fn main() {
     ));
     let (sender, cancelled) = watch::channel(false);
     let digest = media.get(cancelled.clone()).await.expect("media identity");
-    let task = tokio::spawn(extract_indexed_matroska(
+    let task = tokio::spawn(extract_network_matroska(
         media,
         MpvEmbeddedTrack {
             mpv_id: 1,

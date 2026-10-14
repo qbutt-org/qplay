@@ -1,7 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
-const [executable, qtDirectory, evidenceFile] = Bun.argv.slice(2);
+const [executable, qtDirectory, evidenceFile, cancelExecutable] = Bun.argv.slice(2);
 if (!executable || !qtDirectory || !evidenceFile)
     throw new Error("Usage: bun tests/native/subtitles-matroska-sparse.ts <fixture executable> <Qt SDK> <evidence file>");
 
@@ -60,7 +60,18 @@ function subtitle(track: number, duration: number, body: string): Uint8Array {
 }
 
 type Part = { offset: number; data: Uint8Array };
-function container(videoBytes: number): { length: number; parts: Part[] } {
+type ContainerOptions = {
+    index?: "subtitles" | "video" | "none";
+    clusterCount?: number;
+    selectedSecond?: number;
+    unknownClusterSize?: boolean;
+    fault?: "track" | "size";
+};
+
+function container(videoBytes: number, {
+    index = "subtitles", clusterCount = 7_200, selectedSecond = 6_001,
+    unknownClusterSize = false, fault,
+}: ContainerOptions = {}): { length: number; parts: Part[] } {
     const parts: Part[] = [];
     const seekEntry = (id: number[], offset: number) => element([0x4d, 0xbb], bytes(
         element([0x53, 0xab], Uint8Array.from(id)), element([0x53, 0xac], unsigned(offset)),
@@ -69,7 +80,7 @@ function container(videoBytes: number): { length: number; parts: Part[] } {
         seekEntry([0x15, 0x49, 0xa9, 0x66], offset),
         seekEntry([0x16, 0x54, 0xae, 0x6b], offset + info.length),
         seekEntry([0x1f, 0x43, 0xb6, 0x75], offset + info.length + tracks.length),
-        seekEntry([0x1c, 0x53, 0xbb, 0x6b], cues),
+        ...(index !== "none" ? [seekEntry([0x1c, 0x53, 0xbb, 0x6b], cues)] : []),
     ));
     const seekHead = seek(seek(0, 0).length, 0);
     let offset = seekHead.length + info.length + tracks.length;
@@ -78,25 +89,30 @@ function container(videoBytes: number): { length: number; parts: Part[] } {
     const cue = (timestamp: number, clusterPosition: number, relativePosition: number, duration: number) => element([0xbb], bytes(
         element([0xb3], unsigned(timestamp)),
         element([0xb7], bytes(
-            element([0xf7], unsigned(3)),
+            element([0xf7], unsigned(index === "video" ? 1 : 3)),
             element([0xf1], unsigned(clusterPosition)),
             element([0xf0], unsigned(relativePosition)),
             element([0xb2], unsigned(duration)),
         )),
     ));
 
-    for (let second = 0; second < 7_200; ++second) {
+    for (let second = 0; second < clusterCount; ++second) {
         const clusterPosition = offset;
         const timestamp = element([0xe7], unsigned(second * 1_000));
         const wrong = second === 1 ? subtitle(2, 6_499_000, "0,0,Default,,0,0,0,,Wrong track") : new Uint8Array();
-        const selected = second === 1
-            ? subtitle(3, 6_499_000, "0,0,Default,,0,0,0,,{\\an8}Long overlapping cue")
-            : second === 6_001 ? subtitle(3, 2_000, "1,0,Default,,0,0,0,,Selected track after seek") : new Uint8Array();
-        const subtitleData = second === 1
-            ? bytes(wrong, selected)
-            : selected;
+        let selected = new Uint8Array();
+        if (second === 1)
+            selected = subtitle(3, 6_499_000, "0,0,Default,,0,0,0,,{\\an8}Long overlapping cue");
+        else if (second === selectedSecond)
+            selected = subtitle(fault === "track" ? 0 : 3, 2_000, "1,0,Default,,0,0,0,,Selected track after seek");
+        const malformed = second === selectedSecond && fault === "size"
+            ? element([0xa0], bytes(Uint8Array.of(0xa1, 0x89, 0x83, 0, 0, 0))) : new Uint8Array();
+        const subtitleData = bytes(second === 1 ? wrong : new Uint8Array(), selected, malformed);
         const block = bytes(Uint8Array.of(0xa3), size(videoBytes + 4), Uint8Array.of(0x81, 0, 0, 0));
-        const cluster = bytes(Uint8Array.of(0x1f, 0x43, 0xb6, 0x75), size(timestamp.length + block.length + videoBytes + subtitleData.length));
+        const clusterSize = unknownClusterSize
+            ? Uint8Array.of(0xff)
+            : size(timestamp.length + block.length + videoBytes + subtitleData.length);
+        const cluster = bytes(Uint8Array.of(0x1f, 0x43, 0xb6, 0x75), clusterSize);
         parts.push({ offset, data: bytes(cluster, timestamp, block) });
         offset += cluster.length + timestamp.length + block.length + videoBytes;
         if (subtitleData.length) {
@@ -108,7 +124,7 @@ function container(videoBytes: number): { length: number; parts: Part[] } {
             cuePoints.push(cue(second * 1_000, clusterPosition, relative, second === 1 ? 6_499_000 : 2_000));
         }
     }
-    const cues = element([0x1c, 0x53, 0xbb, 0x6b], bytes(...cuePoints));
+    const cues = index !== "none" ? element([0x1c, 0x53, 0xbb, 0x6b], bytes(...cuePoints)) : new Uint8Array();
     parts.push({ offset, data: cues });
     const fullSeekHead = seek(seekHead.length, offset);
     if (fullSeekHead.length !== seekHead.length)
@@ -119,16 +135,29 @@ function container(videoBytes: number): { length: number; parts: Part[] } {
     return { length: prefix.length + offset, parts: [{ offset: 0, data: prefix }, ...parts.map(part => ({ offset: part.offset + prefix.length, data: part.data }))] };
 }
 
-const sources = new Map([["sparse.mkv", container(1024 * 1024)]]);
+const shortLayout = { clusterCount: 128, selectedSecond: 121 };
+const unindexed = container(1024 * 1024, { ...shortLayout, index: "none" });
+const sources = new Map([
+    ["sparse.mkv", container(1024 * 1024)],
+    ["unindexed.mkv", unindexed],
+    ["video-index.mkv", container(1024 * 1024, { ...shortLayout, index: "video" })],
+    ["unknown-clusters.mkv", container(1024 * 1024, { ...shortLayout, index: "none", unknownClusterSize: true })],
+    ["changed.mkv", unindexed],
+    ["slow.mkv", unindexed],
+    ["track.mkv", container(1024 * 1024, { ...shortLayout, index: "none", fault: "track" })],
+    ["size.mkv", container(1024 * 1024, { ...shortLayout, index: "none", fault: "size" })],
+    ["budget.mkv", container(1024 * 1024, { clusterCount: 600, selectedSecond: 121, index: "none" })],
+]);
+let slowClosed = false;
 const measurements = new Map<string, { requests: number; receivedBytes: number; representationBytes: number }>();
 const server = Bun.serve({
     hostname: "127.0.0.1", port: 0,
-    fetch(request) {
+    async fetch(request) {
         const name = new URL(request.url).pathname.split("/").at(-1)!;
         const source = sources.get(name);
         if (!source)
             return new Response(null, { status: 404 });
-        const etag = `"fixture-${name}-${source.length}"`;
+        const etag = '"fixture-' + name + '-' + source.length + '"';
         if (request.method === "HEAD")
             return new Response(null, { headers: { "Content-Length": String(source.length), ETag: etag } });
         if (request.headers.get("If-Match") !== etag)
@@ -140,6 +169,13 @@ const server = Bun.serve({
         const end = Number(range[2]);
         if (end < start || end >= source.length)
             return new Response(null, { status: 416 });
+        if (name === "slow.mkv" && start > 65_536) {
+            await new Promise<void>(resolve => request.signal.addEventListener("abort", () => {
+                slowClosed = true;
+                resolve();
+            }, { once: true }));
+            return new Response(null, { status: 499 });
+        }
         const data = new Uint8Array(end - start + 1);
         for (const part of source.parts) {
             if (part.offset > end)
@@ -154,28 +190,66 @@ const server = Bun.serve({
         measured.receivedBytes += data.length;
         measurements.set(name, measured);
         return new Response(data, { status: 206, headers: {
-            "Content-Length": String(data.length), "Content-Range": `bytes ${start}-${end}/${source.length}`, ETag: etag,
+            "Content-Length": String(data.length),
+            "Content-Range": `bytes ${start}-${end}/${source.length}`,
+            ETag: name === "changed.mkv" && measured.requests > 2 ? '"changed-during-scan"' : etag,
         } });
     },
 });
 
 try {
-    const source = sources.get("sparse.mkv")!;
-    const start = performance.now();
-    const url = new URL("media/0123456789abcdef0123456789abcdef/sparse.mkv", server.url).href;
-    const child = Bun.spawn([resolve(executable), url, "3", "Selected track after seek", "ass", "6001000", "6005000"], {
-        stdout: "pipe", stderr: "pipe", windowsHide: true,
-        env: { ...process.env, Path: `${resolve(qtDirectory, "bin")};${process.env.Path ?? process.env.PATH ?? ""}` },
-    });
-    const deadline = setTimeout(() => child.kill(), 60_000);
-    const [stdout, stderr, exitCode] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited])
-        .finally(() => clearTimeout(deadline));
-    const evidence = { exitCode, elapsedMs: Math.round(performance.now() - start), representationBytes: source.length,
-        measurements: Object.fromEntries(measurements), results: stdout.trim().split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line)), stderr };
-    await writeFile(resolve(evidenceFile), JSON.stringify(evidence, null, 4));
-    if (exitCode !== 0)
-        throw new Error(`Range acquisition fixture failed: ${stderr}`);
-    console.log(JSON.stringify(evidence, null, 4));
+    const cases: unknown[] = [];
+    const profile = resolve(evidenceFile + ".profile");
+    const run = async (name: string, expected: string, start: number, end: number, mode?: string, token = "0123456789abcdef0123456789abcdef") => {
+        const url = new URL(`media/${token}/${name}`, server.url).href;
+        const child = Bun.spawn([resolve(executable), url, "3", expected, "ass", String(start), String(end),
+            ...(mode ? [profile, mode] : [])], {
+            stdout: "pipe", stderr: "pipe", windowsHide: true,
+            env: { ...process.env, Path: `${resolve(qtDirectory, "bin")};${process.env.Path ?? process.env.PATH ?? ""}` },
+        });
+        const deadline = setTimeout(() => child.kill(), 60_000);
+        const [stdout, stderr, exitCode] = await Promise.all([
+            new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
+        ]).finally(() => clearTimeout(deadline));
+        const result = stdout.trim().split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line));
+        cases.push({ name, mode, exitCode, result, stderr });
+        if (exitCode !== 0 || !result.length)
+            throw new Error(`Range acquisition fixture failed for ${name}: ${stderr}`);
+        return result[0];
+    };
+    await run("sparse.mkv", "Selected track after seek", 6_001_000, 6_005_000);
+    await run("video-index.mkv", "Selected track after seek", 121_000, 125_000);
+    await run("unknown-clusters.mkv", "Selected track after seek", 121_000, 125_000);
+    const seeded = await run("unindexed.mkv", "Selected track after seek", 121_000, 125_000, "seed");
+    const reopened = await run("unindexed.mkv", "Selected track after seek", 121_000, 125_000, "offline", "fedcba9876543210fedcba9876543210");
+    if (seeded.mediaDigest !== reopened.mediaDigest || seeded.sourceDigest !== reopened.sourceDigest)
+        throw new Error("Capability URL changed exact cache identity");
+    for (const name of ["changed.mkv", "track.mkv", "size.mkv", "budget.mkv"]) {
+        const result = await run(name, "--reject", 121_000, 125_000);
+        if (result.status !== "rejected")
+            throw new Error(`Malformed representation accepted: ${name}`);
+    }
+    if (cancelExecutable) {
+        const url = new URL("media/0123456789abcdef0123456789abcdef/slow.mkv", server.url).href;
+        const child = Bun.spawn([resolve(cancelExecutable), url], {
+            stdout: "pipe", stderr: "pipe", windowsHide: true,
+            env: { ...process.env, Path: `${resolve(qtDirectory, "bin")};${process.env.Path ?? process.env.PATH ?? ""}` },
+        });
+        const deadline = setTimeout(() => child.kill(), 10_000);
+        const [stdout, stderr, exitCode] = await Promise.all([
+            new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
+        ]).finally(() => clearTimeout(deadline));
+        for (let attempt = 0; attempt < 20 && !slowClosed; attempt++) await Bun.sleep(50);
+        cases.push({ name: "pending-scan-cancel", exitCode, stdout, stderr, slowClosed });
+        if (exitCode !== 0 || !slowClosed)
+            throw new Error(`Pending scan did not drain cancellation: ${stderr}`);
+    }
+    for (const measured of measurements.values()) {
+        if (measured.receivedBytes > 64 * 1024 * 1024)
+            throw new Error("Acquisition exceeded its per-operation byte budget");
+    }
+    await writeFile(resolve(evidenceFile), JSON.stringify({ cases, slowClosed, measurements: Object.fromEntries(measurements) }, null, 4));
+    console.log(`Sparse/without-Cues acquisition PASS: ${evidenceFile}`);
 } finally {
     server.stop(true);
 }

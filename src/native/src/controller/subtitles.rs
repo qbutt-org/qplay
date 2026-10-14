@@ -12,8 +12,8 @@ use super::ffi;
 use crate::preferences::SubtitleTranslationPreferences;
 use crate::subtitles::{
     MpvEmbeddedTrack, PlaybackMedia, SubtitleFormat, SubtitleIdentity, SubtitleService,
-    SubtitleSourceError, SubtitleTranslationOptions, VerifiedMediaTools, extract_indexed_matroska,
-    extract_local_embedded, verify_embedded_track, window_bounds,
+    SubtitleSourceError, SubtitleTranslationOptions, VerifiedMediaTools, extract_local_embedded,
+    extract_network_matroska, verify_embedded_track, window_bounds,
 };
 use crate::track_model::Track;
 
@@ -148,7 +148,7 @@ async fn translate_window(
                     .map_err(source_status)?;
             (document, track.identity(digest))
         } else {
-            extract_indexed_matroska(
+            extract_network_matroska(
                 task.media.clone(),
                 selected,
                 start,

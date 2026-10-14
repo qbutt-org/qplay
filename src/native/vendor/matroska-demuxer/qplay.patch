@@ -62,10 +62,12 @@ index 90a5e71..bf6cc8d 100644
 +                )
 +            }
 diff --git a/src/lib.rs b/src/lib.rs
-index 8ece7eb..037596a 100644
+index 8ece7eb..90f5c75 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -66,0 +67,15 @@ type Result<T> = std::result::Result<T, DemuxError>;
+@@ -60,0 +61 @@ mod error;
++mod subtitle_index;
+@@ -66,0 +68,15 @@ type Result<T> = std::result::Result<T, DemuxError>;
 +pub(crate) const MAX_METADATA_BYTES: u64 = 8 * 1024 * 1024;
 +const MAX_FRAME_BYTES: u64 = 32 * 1024 * 1024;
 +const MAX_CUED_SUBTITLE_BYTES: u64 = 8 * 1024 * 1024;
@@ -81,10 +83,10 @@ index 8ece7eb..037596a 100644
 +    Ok(usize::try_from(size)?)
 +}
 +
-@@ -1395 +1410 @@ struct CuePoint {
+@@ -1395 +1411 @@ struct CuePoint {
 -    track_position: CueTrackPositions,
 +    track_positions: Vec<CueTrackPositions>,
-@@ -1403,2 +1418,14 @@ impl<R: Read + Seek> ParsableElement<R> for CuePoint {
+@@ -1403,2 +1419,14 @@ impl<R: Read + Seek> ParsableElement<R> for CuePoint {
 -        let track_position =
 -            parse_child::<_, CueTrackPositions>(r, fields, ElementId::CueTrackPositions)?;
 +        let mut track_positions = Vec::new();
@@ -101,16 +103,16 @@ index 8ece7eb..037596a 100644
 +        if track_positions.is_empty() {
 +            return Err(DemuxError::ElementNotFound(ElementId::CueTrackPositions));
 +        }
-@@ -1408 +1435 @@ impl<R: Read + Seek> ParsableElement<R> for CuePoint {
+@@ -1408 +1436 @@ impl<R: Read + Seek> ParsableElement<R> for CuePoint {
 -            track_position,
 +            track_positions,
-@@ -1416 +1443 @@ struct CueTrackPositions {
+@@ -1416 +1444 @@ struct CueTrackPositions {
 -    _track: u64,
 +    track: u64,
-@@ -1419 +1446 @@ struct CueTrackPositions {
+@@ -1419 +1447 @@ struct CueTrackPositions {
 -    _duration: Option<u64>,
 +    duration: Option<u64>,
-@@ -1422,0 +1450,15 @@ struct CueTrackPositions {
+@@ -1422,0 +1451,15 @@ struct CueTrackPositions {
 +/// An indexed subtitle block with an explicit duration and block position.
 +#[derive(Clone, Copy, Debug)]
 +pub struct SubtitleCue {
@@ -126,13 +128,13 @@ index 8ece7eb..037596a 100644
 +    pub track: u64,
 +}
 +
-@@ -1434 +1476 @@ impl<R: Read + Seek> ParsableElement<R> for CueTrackPositions {
+@@ -1434 +1477 @@ impl<R: Read + Seek> ParsableElement<R> for CueTrackPositions {
 -            _track: track,
 +            track,
-@@ -1437 +1479 @@ impl<R: Read + Seek> ParsableElement<R> for CueTrackPositions {
+@@ -1437 +1480 @@ impl<R: Read + Seek> ParsableElement<R> for CueTrackPositions {
 -            _duration: duration,
 +            duration,
-@@ -1497,3 +1539,8 @@ impl<R: Read + Seek> MatroskaFile<R> {
+@@ -1497,3 +1540,8 @@ impl<R: Read + Seek> MatroskaFile<R> {
 -            cue_points
 -                .iter_mut()
 -                .for_each(|p| p.track_position.cluster_position += segment_data_offset);
@@ -144,10 +146,21 @@ index 8ece7eb..037596a 100644
 +                        .ok_or(DemuxError::InvalidEbmlDataSize)?;
 +                }
 +            }
-@@ -1546,0 +1594,150 @@ impl<R: Read + Seek> MatroskaFile<R> {
-+    /// Returns the exact subtitle index only when every cue for this track has
-+    /// the duration and block offset needed to find overlapping events.
-+    pub fn subtitle_cues(&self, track: u64) -> Option<Vec<SubtitleCue>> {
+@@ -1546,0 +1595,166 @@ impl<R: Read + Seek> MatroskaFile<R> {
++    /// Finds exact subtitle blocks, using complete Cues when available.
++    /// Otherwise scans block headers and durations while seeking over payloads.
++    pub fn subtitle_cues(&mut self, track: u64) -> Result<Vec<SubtitleCue>> {
++        if let Some(cues) = self.indexed_subtitle_cues(track) {
++            return Ok(cues);
++        }
++        let first_cluster = *self
++            .seek_head
++            .get(&ElementId::Cluster)
++            .ok_or(DemuxError::CantFindCluster)?;
++        subtitle_index::scan(&mut self.file, first_cluster, track)
++    }
++
++    fn indexed_subtitle_cues(&self, track: u64) -> Option<Vec<SubtitleCue>> {
 +        let mut cues = Vec::new();
 +        for point in self.cue_points.as_ref()? {
 +            for position in point
@@ -178,6 +191,11 @@ index 8ece7eb..037596a 100644
 +            ElementId::Cluster,
 +            Some(cue.cluster_position),
 +        )?;
++        let cluster_size = if cluster_size == u64::MAX {
++            remaining_len(&mut self.file)?
++        } else {
++            cluster_size
++        };
 +        if cue.relative_position >= cluster_size {
 +            return Err(DemuxError::InvalidBlockSize);
 +        }
@@ -269,7 +287,7 @@ index 8ece7eb..037596a 100644
 +        };
 +        if offset
 +            .checked_add(size)
-+            .is_none_or(|block_end| block_end > cluster_end)
++            .map_or(true, |block_end| block_end > cluster_end)
 +        {
 +            return Err(DemuxError::InvalidBlockSize);
 +        }
@@ -295,15 +313,209 @@ index 8ece7eb..037596a 100644
 +        Ok(addition)
 +    }
 +
-@@ -1668 +1865 @@ impl<R: Read + Seek> MatroskaFile<R> {
+@@ -1668 +1882 @@ impl<R: Read + Seek> MatroskaFile<R> {
 -            let size: usize = queued_frame.size.try_into()?;
 +            let size = checked_allocation_size(queued_frame.size, MAX_FRAME_BYTES)?;
-@@ -1720 +1917,4 @@ impl<R: Read + Seek> MatroskaFile<R> {
+@@ -1720 +1934,4 @@ impl<R: Read + Seek> MatroskaFile<R> {
 -                    let mut target_offset = point.track_position.cluster_position;
 +                    let Some(position) = point.track_positions.first() else {
 +                        return Ok(cluster_start);
 +                    };
 +                    let mut target_offset = position.cluster_position;
-@@ -1722 +1922 @@ impl<R: Read + Seek> MatroskaFile<R> {
+@@ -1722 +1939 @@ impl<R: Read + Seek> MatroskaFile<R> {
 -                    if let Some(relative_position) = point.track_position.relative_position {
 +                    if let Some(relative_position) = position.relative_position {
+diff --git a/src/subtitle_index.rs b/src/subtitle_index.rs
+new file mode 100644
+index 0000000..fac72c4
+--- /dev/null
++++ b/src/subtitle_index.rs
+@@ -0,0 +1,188 @@
++//! Exact subtitle block discovery when a track has no complete Cue index.
++
++use std::io::{Read, Seek, SeekFrom};
++
++use crate::ebml::{next_element, parse_element_header, parse_variable_u64, ElementData};
++use crate::{DemuxError, ElementId, Result, SubtitleCue, MAX_COLLECTION_ENTRIES};
++
++struct Cluster {
++    position: u64,
++    data: u64,
++    end: u64,
++    timestamp: Option<u64>,
++    unknown_size: bool,
++}
++
++struct Block {
++    offset: u64,
++    size: u64,
++    duration: Option<u64>,
++}
++
++pub(crate) fn scan<R: Read + Seek>(
++    file: &mut R,
++    first_cluster: u64,
++    track: u64,
++) -> Result<Vec<SubtitleCue>> {
++    let file_end = file.seek(SeekFrom::End(0))?;
++    file.seek(SeekFrom::Start(first_cluster))?;
++    let mut cues = Vec::new();
++    let mut cluster: Option<Cluster> = None;
++    let mut scanned = 0_usize;
++
++    while file.stream_position()? < file_end {
++        if scanned >= MAX_COLLECTION_ENTRIES {
++            return Err(DemuxError::ResourceLimitExceeded {
++                declared: u64::try_from(scanned)? + 1,
++                limit: u64::try_from(MAX_COLLECTION_ENTRIES)?,
++            });
++        }
++        scanned += 1;
++        let position = file.stream_position()?;
++        if cluster
++            .as_ref()
++            .is_some_and(|cluster| position == cluster.end)
++        {
++            cluster = None;
++        }
++        let (id, size) = parse_element_header(file, None)?;
++        let data = file.stream_position()?;
++        let end = if id == ElementId::Cluster && size == u64::MAX {
++            file_end
++        } else {
++            data.checked_add(size)
++                .filter(|end| *end <= file_end)
++                .ok_or(DemuxError::InvalidEbmlDataSize)?
++        };
++        if id == ElementId::Cluster {
++            if cluster
++                .as_ref()
++                .is_some_and(|cluster| !cluster.unknown_size)
++            {
++                return Err(DemuxError::InvalidEbmlDataSize);
++            }
++            cluster = Some(Cluster {
++                position,
++                data,
++                end,
++                timestamp: None,
++                unknown_size: size == u64::MAX,
++            });
++            continue;
++        }
++        let Some(cluster) = &mut cluster else {
++            file.seek(SeekFrom::Start(end))?;
++            continue;
++        };
++        if end > cluster.end {
++            return Err(DemuxError::InvalidEbmlDataSize);
++        }
++        match id {
++            ElementId::Timestamp => {
++                if cluster.timestamp.is_some() {
++                    return Err(DemuxError::InvalidBlockSize);
++                }
++                file.seek(SeekFrom::Start(position))?;
++                let (_, ElementData::Unsigned(value)) = next_element(file)? else {
++                    return Err(DemuxError::UnexpectedDataType);
++                };
++                cluster.timestamp = Some(value);
++            }
++            ElementId::BlockGroup | ElementId::SimpleBlock => {
++                let cluster_timestamp = cluster
++                    .timestamp
++                    .ok_or(DemuxError::ElementNotFound(ElementId::Timestamp))?;
++                let block = if id == ElementId::BlockGroup {
++                    block_group(file, end)?
++                } else {
++                    Block {
++                        offset: data,
++                        size,
++                        duration: None,
++                    }
++                };
++                file.seek(SeekFrom::Start(block.offset))?;
++                let block_track = parse_variable_u64(file)?;
++                let block_end = block
++                    .offset
++                    .checked_add(block.size)
++                    .ok_or(DemuxError::InvalidBlockSize)?;
++                if block_track == 0
++                    || block_track == u64::MAX
++                    || file
++                        .stream_position()?
++                        .checked_add(3)
++                        .map_or(true, |header_end| header_end > block_end)
++                {
++                    return Err(DemuxError::InvalidBlockSize);
++                }
++                if block_track == track {
++                    let mut relative = [0_u8; 2];
++                    file.read_exact(&mut relative)?;
++                    let timestamp = i128::from(cluster_timestamp)
++                        + i128::from(i16::from_be_bytes([relative[0], relative[1]]));
++                    let timestamp = u64::try_from(timestamp)?;
++                    let duration = block
++                        .duration
++                        .filter(|duration| *duration > 0)
++                        .ok_or(DemuxError::ElementNotFound(ElementId::BlockDuration))?;
++                    cues.push(SubtitleCue {
++                        timestamp,
++                        duration,
++                        cluster_position: cluster.position,
++                        relative_position: position - cluster.data,
++                        track,
++                    });
++                }
++            }
++            _ => {}
++        }
++        file.seek(SeekFrom::Start(end))?;
++    }
++    Ok(cues)
++}
++
++fn block_group<R: Read + Seek>(file: &mut R, end: u64) -> Result<Block> {
++    let mut block = None;
++    let mut duration = None;
++    let mut children = 0;
++    while file.stream_position()? < end {
++        if children >= 64 {
++            return Err(DemuxError::ResourceLimitExceeded {
++                declared: 65,
++                limit: 64,
++            });
++        }
++        children += 1;
++        let position = file.stream_position()?;
++        let (id, size) = parse_element_header(file, None)?;
++        let data = file.stream_position()?;
++        let child_end = data
++            .checked_add(size)
++            .filter(|child_end| *child_end <= end)
++            .ok_or(DemuxError::InvalidBlockSize)?;
++        match id {
++            ElementId::Block if size < 4 || block.is_some() => {
++                return Err(DemuxError::InvalidBlockSize);
++            }
++            ElementId::Block => block = Some((data, size)),
++            ElementId::BlockDuration => {
++                file.seek(SeekFrom::Start(position))?;
++                let (_, ElementData::Unsigned(value)) = next_element(file)? else {
++                    return Err(DemuxError::UnexpectedDataType);
++                };
++                if duration.replace(value).is_some() {
++                    return Err(DemuxError::InvalidBlockSize);
++                }
++            }
++            _ => {}
++        }
++        file.seek(SeekFrom::Start(child_end))?;
++    }
++    let (offset, size) = block.ok_or(DemuxError::ElementNotFound(ElementId::Block))?;
++    Ok(Block {
++        offset,
++        size,
++        duration,
++    })
++}

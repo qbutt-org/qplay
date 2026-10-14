@@ -12,7 +12,7 @@ mod translation;
 
 pub use cache::{SubtitleCache, SubtitleCacheKey, SubtitleIdentity};
 pub use document::{SubtitleDocument, SubtitleError, SubtitleFormat, SubtitleFragment};
-pub use matroska::extract_indexed_matroska;
+pub use matroska::extract_network_matroska;
 pub use media::PlaybackMedia;
 pub use service::{SubtitleService, SubtitleServiceError};
 pub use source::{

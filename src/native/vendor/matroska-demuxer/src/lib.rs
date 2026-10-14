@@ -58,6 +58,7 @@ mod ebml;
 pub(crate) mod element_id;
 mod enums;
 mod error;
+mod subtitle_index;
 
 /// The doc type version this demuxer supports.
 const DEMUXER_DOC_TYPE_VERSION: u64 = 4;
@@ -1591,9 +1592,20 @@ impl<R: Read + Seek> MatroskaFile<R> {
         self.tracks.as_ref()
     }
 
-    /// Returns the exact subtitle index only when every cue for this track has
-    /// the duration and block offset needed to find overlapping events.
-    pub fn subtitle_cues(&self, track: u64) -> Option<Vec<SubtitleCue>> {
+    /// Finds exact subtitle blocks, using complete Cues when available.
+    /// Otherwise scans block headers and durations while seeking over payloads.
+    pub fn subtitle_cues(&mut self, track: u64) -> Result<Vec<SubtitleCue>> {
+        if let Some(cues) = self.indexed_subtitle_cues(track) {
+            return Ok(cues);
+        }
+        let first_cluster = *self
+            .seek_head
+            .get(&ElementId::Cluster)
+            .ok_or(DemuxError::CantFindCluster)?;
+        subtitle_index::scan(&mut self.file, first_cluster, track)
+    }
+
+    fn indexed_subtitle_cues(&self, track: u64) -> Option<Vec<SubtitleCue>> {
         let mut cues = Vec::new();
         for point in self.cue_points.as_ref()? {
             for position in point
@@ -1624,6 +1636,11 @@ impl<R: Read + Seek> MatroskaFile<R> {
             ElementId::Cluster,
             Some(cue.cluster_position),
         )?;
+        let cluster_size = if cluster_size == u64::MAX {
+            remaining_len(&mut self.file)?
+        } else {
+            cluster_size
+        };
         if cue.relative_position >= cluster_size {
             return Err(DemuxError::InvalidBlockSize);
         }
@@ -1715,7 +1732,7 @@ impl<R: Read + Seek> MatroskaFile<R> {
         };
         if offset
             .checked_add(size)
-            .is_none_or(|block_end| block_end > cluster_end)
+            .map_or(true, |block_end| block_end > cluster_end)
         {
             return Err(DemuxError::InvalidBlockSize);
         }
