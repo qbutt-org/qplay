@@ -14,6 +14,15 @@ Qt 6.12.0
   Module and third-party license details:
   https://doc.qt.io/qt-6/licenses-used-in-qt.html
 
+Microsoft Visual C++ Runtime
+  Unmodified x64 Microsoft.VC143.CRT DLLs from the native compiler's matching
+  Visual Studio VC/Redist distribution accompany qplay.exe for offline playback.
+  build-manifest.json records the toolset, redistributable cohort, installer hash
+  and each bundled DLL hash. The Redistributable license is MSVC-Runtime.rtf.
+  Microsoft permits redistribution of these VC/Redist files under its terms:
+  https://learn.microsoft.com/visualstudio/releases/2022/redistribution
+  The Windows 10/11 Universal C Runtime remains an operating system component.
+
 mpv
   Source: https://github.com/mpv-player/mpv/tree/b2c255c13e8e37952dbac6c34da56a690560378b
   The public qbutt 1.3.0 runtime supplies this build with its frozen MSYS2

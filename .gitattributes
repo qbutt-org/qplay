@@ -7,3 +7,5 @@
 *.zip -text
 # These exact upstream build inputs are bound by their own SHA256 manifest.
 profile/tools/framegen-vsov/** -text
+
+*.rtf binary

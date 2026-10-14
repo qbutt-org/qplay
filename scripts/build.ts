@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, rmdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 
 const root = resolve(import.meta.dir, "..");
@@ -162,8 +162,53 @@ try {
     if (!await Bun.file(nativeExecutable).exists())
         throw new Error(`The native player is missing: ${nativeExecutable}`);
     await cp(nativeExecutable, join(bundle, "qplay.exe"));
-    await run([windeployqt, "--release", "--qmldir", join(root, "src/native/qml"),
-        "--translations", "en,ru", "--no-compiler-runtime", join(bundle, "qplay.exe")]);
+    const deployment = JSON.parse(await outputOf([windeployqt, "--release", "--json",
+        "--qmldir", join(root, "src/native/qml"), "--translations", "en,ru",
+        "--compiler-runtime", join(bundle, "qplay.exe")])) as {
+        files: { source: string; target: string }[];
+    };
+    const redistributables = deployment.files.filter(file =>
+        basename(file.source).toLowerCase() === "vc_redist.x64.exe");
+    if (redistributables.length !== 1)
+        throw new Error("Qt deployment did not locate one official x64 MSVC redistributable.");
+
+    const redistributable = redistributables[0];
+    const redistDirectory = dirname(await realpath(redistributable.source));
+    const compiler = cmakeCache.match(/^CMAKE_CXX_COMPILER:FILEPATH=(.+)$/m)?.[1];
+    if (!compiler)
+        throw new Error("The native build does not identify its MSVC compiler.");
+    const toolsetDirectory = resolve(dirname(await realpath(compiler)), "../../..");
+    const toolset = basename(toolsetDirectory);
+    const visualStudio = resolve(toolsetDirectory, "../../../..");
+    const redistRoot = join(visualStudio, "VC/Redist/MSVC") + sep;
+    if (!redistDirectory.toLowerCase().startsWith(redistRoot.toLowerCase()))
+        throw new Error("The MSVC redistributable is outside the native compiler's Visual Studio installation.");
+    const servicing = await readFile(join(redistDirectory, "Auxiliary/Microsoft.VC.ServicingVersion.Redist.props"), "utf8");
+    const servicingVersion = servicing.match(/<VCServicingVersionRedist[^>]*>([0-9.]+)<[/]VCServicingVersionRedist>/)?.[1];
+    if (servicingVersion !== toolset)
+        throw new Error("The MSVC redistributable does not match the native compiler toolset.");
+
+    const crtDirectory = join(redistDirectory, "x64/Microsoft.VC143.CRT");
+    const crtFiles = await files(crtDirectory);
+    if (crtFiles.some(file => basename(file) !== file || !file.endsWith(".dll"))
+        || !["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"].every(file => crtFiles.includes(file)))
+        throw new Error("The official x64 MSVC CRT cohort is incomplete or invalid.");
+    // Qt deploys an installer; portable playback needs its redistributable DLL cohort beside qplay.exe.
+    for (const file of crtFiles)
+        await cp(join(crtDirectory, file), join(bundle, file));
+    if (await realpath(redistributable.target) !== await realpath(bundle))
+        throw new Error("The MSVC redistributable installer is outside the staged bundle.");
+    await rm(join(bundle, basename(redistributable.source)));
+    const compilerRuntime = {
+        toolset,
+        redistributable: basename(redistDirectory),
+        architecture: "x64",
+        cohort: "Microsoft.VC143.CRT",
+        installerSha256: await hash(redistributable.source),
+        redistribution: "https://learn.microsoft.com/visualstudio/releases/2022/redistribution",
+        license: "engine/licenses/MSVC-Runtime.rtf",
+        files: crtFiles,
+    };
     const inventory: Record<string, string> = {};
     for (const member of await files(bundle))
         inventory[member] = await hash(join(bundle, member));
@@ -178,6 +223,7 @@ try {
         sourceWorktreeChanged,
         buildSystem: "CMake, CXX-Qt and Rust",
         qtVersion,
+        compilerRuntime,
         runtimeArchive: { url: lock.runtime.url, sha256: lock.runtime.sha256, size: lock.runtime.size },
         framegenManager: { sha256: manager.sha256, binaryRevision: manager.binaryRevision },
         correspondingSources: lock.sourceArchive,
