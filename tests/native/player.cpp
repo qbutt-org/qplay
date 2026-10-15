@@ -172,6 +172,7 @@ int main(int argc, char *argv[])
     const QString networkSubtitle = qEnvironmentVariable("QPLAY_SUBTITLE_HTTP_QA");
     const QString embeddedFormat = qEnvironmentVariable("QPLAY_SUBTITLE_MKV_QA");
     const bool embeddedNetworkQa = !embeddedFormat.isEmpty();
+    const bool torrentSubtitleBudgetQa = qEnvironmentVariableIsSet("QPLAY_TORRENT_SUBTITLE_BUDGET_QA");
     const bool downloadQa = qEnvironmentVariableIsSet("QPLAY_DOWNLOAD_QA");
     const QString downloadPipe = QStringLiteral("qbutt-mpv-save-%1").arg(GetCurrentProcessId());
 
@@ -207,6 +208,15 @@ int main(int argc, char *argv[])
         }
 
         {
+            if (torrentSubtitleBudgetQa)
+            {
+                const QByteArray isolated = QDir(profile).absoluteFilePath(QStringLiteral("isolated-services")).toUtf8();
+                require(QDir().mkpath(QString::fromUtf8(isolated)), "Create isolated service directory failed");
+                qputenv("ProgramFiles", isolated);
+                qputenv("LOCALAPPDATA", isolated);
+                qputenv("CODEX_HOME", isolated);
+                qunsetenv("OPENROUTER_API_KEY");
+            }
             Qplay::PlayerController backend;
             backend.setDisplayRate(60);
             const QString preferences = QDir(profile).absoluteFilePath(QStringLiteral("config/preferences.json"));
@@ -444,6 +454,84 @@ int main(int argc, char *argv[])
                 evidence[QStringLiteral("exitCode")] = 0;
                 QFile output(evidencePrefix + QStringLiteral(".json"));
                 require(output.open(QIODevice::WriteOnly), "Write download evidence failed");
+                output.write(QJsonDocument(evidence).toJson());
+                return 0;
+            }
+            if (torrentSubtitleBudgetQa)
+            {
+                backend.changeMute(true);
+                backend.openMedia(media);
+                wait([&] { return backend.mediaLoaded() && backend.position() > 0.5; },
+                    "Incomplete torrent Matroska did not play");
+                require(backend.audioTracks()->rowCount({}) > 0, "Torrent Matroska lost its audio track");
+                qint64 subtitleId = selectedSubtitle(backend.subtitleTracks());
+                if (subtitleId < 0)
+                {
+                    for (int row = 0; row < backend.subtitleTracks()->rowCount({}); ++row)
+                    {
+                        const auto index = backend.subtitleTracks()->index(row, 0, {});
+                        if (backend.subtitleTracks()->data(index, 257).toString() == QStringLiteral("sub"))
+                        {
+                            subtitleId = backend.subtitleTracks()->data(index, 256).toLongLong();
+                            break;
+                        }
+                    }
+                }
+                require(subtitleId > 0, "Torrent Matroska lost its original ASS track");
+                backend.selectTrack(QStringLiteral("sub"), subtitleId);
+                wait([&] { return selectedSubtitle(backend.subtitleTracks()) == subtitleId; },
+                    "Select original torrent ASS failed");
+                backend.seek(20);
+                wait([&] { return backend.position() >= 20 && backend.position() < 21; },
+                    "Incomplete torrent Matroska seek failed");
+                backend.seek(12.5);
+                wait([&] { return std::abs(backend.position() - 12.5) < 0.2; },
+                    "Torrent Matroska backward seek failed");
+                backend.togglePause();
+                wait([&] { return backend.paused(); }, "Pause before subtitle scan failed");
+                backend.changeSubtitleTranslation(true);
+                const double before = backend.position();
+                QElapsedTimer budget;
+                budget.start();
+                while (backend.subtitleStatus() == QStringLiteral("working") && budget.elapsed() < 45000)
+                    tick();
+                require(backend.subtitleStatus() == QStringLiteral("failed"),
+                    "Expected bounded subtitle scan failure; extraction reaching unavailable inference also fails this probe");
+                const qint64 scanMilliseconds = budget.elapsed();
+                require(scanMilliseconds >= 29000 && scanMilliseconds < 40000,
+                    "Subtitle failure did not exercise its total scan deadline");
+                backend.togglePause();
+                wait([&] { return backend.position() > before + 1; }, "Video did not resume after subtitle failure");
+                require(backend.mediaLoaded() && backend.errorText().isEmpty(),
+                    "Subtitle scan failure blocked torrent video playback");
+                require(!backend.subtitleTranslationActive() && selectedSubtitle(backend.subtitleTracks()) == subtitleId,
+                    "Subtitle scan failure did not preserve Original");
+                const double after = backend.position();
+                backend.seek(50);
+                wait([&] { return backend.position() >= 50 && backend.position() < 51; },
+                    "Subtitle failure blocked a subsequent torrent seek");
+                tick();
+                require(brightPixels(target.toImage()) > 50, "Torrent video rendered no decoded pixels");
+                require(target.toImage().save(evidencePrefix + QStringLiteral(".torrent.png")),
+                    "Save torrent frame failed");
+                backend.stop();
+                wait([&] { return !backend.mediaLoaded(); }, "Torrent playback did not stop");
+                require(QThreadPool::globalInstance()->waitForDone(5000), "Torrent subtitle reader did not drain");
+                require(childProcessCount() == 0, "Torrent playback retained a child process");
+                evidence = {
+                    {QStringLiteral("incompleteTorrentPlayback"), true},
+                    {QStringLiteral("subtitleScanFailed"), true},
+                    {QStringLiteral("originalPreserved"), true},
+                    {QStringLiteral("seekBeforeAndAfterFailure"), true},
+                    {QStringLiteral("positionBeforeScan"), before},
+                    {QStringLiteral("positionAfterScan"), after},
+                    {QStringLiteral("scanMilliseconds"), scanMilliseconds},
+                    {QStringLiteral("isolatedInferenceUnavailable"), true},
+                    {QStringLiteral("ownedChildren"), 0},
+                    {QStringLiteral("exitCode"), 0}
+                };
+                QFile output(evidencePrefix + QStringLiteral(".json"));
+                require(output.open(QIODevice::WriteOnly), "Write torrent evidence failed");
                 output.write(QJsonDocument(evidence).toJson());
                 return 0;
             }
