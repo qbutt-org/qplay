@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <memory>
 #include <stdexcept>
+#include <string_view>
 
 #include <QDir>
 #include <QDirIterator>
@@ -129,6 +130,28 @@ void hover(QQuickWindow &window, QQuickItem &item)
 
 int main(int argc, char *argv[])
 {
+    if (qEnvironmentVariableIsSet("QPLAY_EXTRACTOR_ERROR_QA") && argc > 1
+        && std::string_view(argv[1]) == "--no-warnings")
+    {
+        const std::string_view url(argv[argc - 1]);
+        if (url.ends_with("error-a"))
+        {
+            std::fputs("ERROR: Fixture A blocked. https://fixture.invalid/media?signature=fixture-signed Cookie: fixture-cookie\n", stderr);
+            std::fputs("ERROR: Fixture jar unavailable C:\\QA\\private folder\\session.txt\n", stderr);
+            std::fputs("ERROR: Fixture authorization denied Authorization: fixture-authorization\n", stderr);
+            std::fputs("ERROR: Fixture custom field X-Request-Key: fixture-header\n", stderr);
+            std::fputs("ERROR: Fixture Unix jar unavailable /tmp/private-jar/session.txt\n", stderr);
+            std::fputs("ERROR: Fixture UNC jar unavailable \\\\fixture-server\\private-jar\\session.txt\n", stderr);
+            for (int index = 0; index < 6000; ++index)
+                std::fputs("\xD1\x8F", stderr);
+            std::fputs("\n", stderr);
+        }
+        else if (url.ends_with("error-b"))
+            std::fputs("ERROR: Fixture B denied.\n", stderr);
+        else
+            std::fputs("ERROR: Fixture C expired.\n", stderr);
+        return 1;
+    }
     if (argc != 6)
         return 2;
 
@@ -305,6 +328,70 @@ int main(int argc, char *argv[])
                 evidence[QStringLiteral("exitCode")] = 0;
                 QFile output(evidencePrefix + QStringLiteral(".json"));
                 require(output.open(QIODevice::WriteOnly), "Write startup evidence failed");
+                output.write(QJsonDocument(evidence).toJson());
+                return 0;
+            }
+
+            if (qEnvironmentVariableIsSet("QPLAY_EXTRACTOR_ERROR_QA"))
+            {
+                require(backend.configureLaunch({QStringLiteral("--script-opts-append=ytdl_hook-ytdl_path=")
+                    + QCoreApplication::applicationFilePath()}).isEmpty(), "Configure controlled extractor failed");
+                backend.initialize(library, profile);
+                wait([&] { return backend.engineReady(); }, "Extractor fixture session did not initialize");
+                backend.changeMute(true);
+                wait([&] { return backend.muted(); }, "Muting extractor recovery fixture timed out");
+                const auto failOpening = [&](const QString &suffix, const QString &expected)
+                {
+                    backend.openMedia(QStringLiteral("ytdl://http://127.0.0.1:1/") + suffix);
+                    QElapsedTimer timeout;
+                    timeout.start();
+                    while (!backend.errorText().contains(expected) && timeout.elapsed() < 15000)
+                        tick();
+                    require(backend.errorText().contains(expected), "Controlled extractor failure did not arrive");
+                    require(backend.state() == Qplay::Playback::State::Failed, "Extractor error did not fail opening");
+                    return backend.errorText();
+                };
+                const QString first = failOpening(QStringLiteral("error-a"), QStringLiteral("Fixture A blocked"));
+                require(first.toUtf8().size() >= 1021 && first.toUtf8().size() <= 1024,
+                    "Extractor reason did not exercise its UTF-8 byte bound");
+                for (const QString &privateValue : {QStringLiteral("fixture-signed"), QStringLiteral("fixture-cookie"),
+                    QStringLiteral("fixture-authorization"), QStringLiteral("fixture-header"), QStringLiteral("fixture-server"),
+                    QStringLiteral("private folder"), QStringLiteral("private-jar"), QStringLiteral("session.txt")})
+                    require(!first.contains(privateValue), "Extractor reason exposed private request data");
+                tick();
+                require(target.toImage().save(evidencePrefix + QStringLiteral(".error.png")), "Save extractor error scene failed");
+                backend.openMedia(media);
+                require(backend.errorText().isEmpty(), "New opening retained the previous extractor reason");
+                wait([&] { return backend.mediaLoaded() && backend.position() > 0.25; }, "Legal media did not decode after extractor failure");
+                require(backend.errorText().isEmpty(), "Successful playback retained an extractor reason");
+                const QString second = failOpening(QStringLiteral("error-b"), QStringLiteral("Fixture B denied"));
+                require(!second.contains(QStringLiteral("Fixture A")),
+                    "Second failure retained the previous reason");
+                backend.initialize(library, QDir(profile).absoluteFilePath(QStringLiteral("replacement")));
+                require(backend.errorText().isEmpty(), "New session retained an extractor reason");
+                wait([&] { return backend.engineReady(); }, "Replacement extractor session did not initialize");
+                const QString third = failOpening(QStringLiteral("error-c"), QStringLiteral("Fixture C expired"));
+                require(!third.contains(QStringLiteral("Fixture B")),
+                    "New generation retained the previous extractor reason");
+                require(childProcessCount() == 0, "Controlled extractor survived its failed opening");
+                backend.stop();
+                evidence = {
+                    {QStringLiteral("extractorReason"), true},
+                    {QStringLiteral("privateDataRedacted"), true},
+                    {QStringLiteral("boundedBytes"), first.toUtf8().size()},
+                    {QStringLiteral("errorSuccessNewError"), true},
+                    {QStringLiteral("newGenerationReason"), true},
+                    {QStringLiteral("firstReason"), first.left(250)},
+                    {QStringLiteral("secondReason"), second},
+                    {QStringLiteral("thirdReason"), third},
+                    {QStringLiteral("ownedChildren"), 0},
+                    {QStringLiteral("exitCode"), 0}
+                };
+                root.reset();
+                gl.makeCurrent(&surface);
+                control.invalidate();
+                QFile output(evidencePrefix + QStringLiteral(".json"));
+                require(output.open(QIODevice::WriteOnly), "Write extractor error evidence failed");
                 output.write(QJsonDocument(evidence).toJson());
                 return 0;
             }

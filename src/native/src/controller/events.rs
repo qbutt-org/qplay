@@ -5,7 +5,7 @@ use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::QString;
 
 use super::ffi;
-use crate::session::{Event, PropertyValue};
+use crate::session::{Event, MAX_EXTRACTOR_ERROR, PropertyValue};
 use crate::track_model::Track;
 
 impl ffi::PlayerController {
@@ -24,10 +24,29 @@ impl ffi::PlayerController {
                 Event::ClientMessage(arguments) => {
                     self.as_mut().receive_download_message(&arguments)
                 }
+                Event::ExtractorError(reason) if !self.file_loaded && !reason.is_empty() => {
+                    let mut state = self.as_mut().rust_mut();
+                    if !state.extractor_error.is_empty()
+                        && state.extractor_error.len() < MAX_EXTRACTOR_ERROR
+                    {
+                        state.extractor_error.push('\n');
+                    }
+                    let remaining = MAX_EXTRACTOR_ERROR - state.extractor_error.len();
+                    state
+                        .extractor_error
+                        .push_str(&reason[..reason.floor_char_boundary(remaining)]);
+                    // mpv can queue hook stderr after END_FILE has reported failure.
+                    if state.state == ffi::State::Failed {
+                        state.error_text = QString::from(state.extractor_error.as_str());
+                    }
+                }
                 Event::StartFile => {
                     self.as_mut().rust_mut().download = None;
                     self.as_mut().cancel_subtitle_job();
                     let mut state = self.as_mut().rust_mut();
+                    state.extractor_error.clear();
+                    state.error_text = QString::default();
+                    state.state = ffi::State::Loading;
                     state.subtitle_original_id = None;
                     state.subtitle_output_id = None;
                     state.subtitle_output_path = None;
@@ -73,6 +92,7 @@ impl ffi::PlayerController {
                             session.text("http-proxy"),
                         ))
                     });
+                    state.extractor_error.clear();
                     state.file_loaded = true;
                     state.error_text = QString::default();
                     state.state = ffi::State::Loading;
@@ -89,9 +109,17 @@ impl ffi::PlayerController {
                         && (self.launch.ipc_path.is_some()
                             || self.media.as_ref() == Some(&self.observed_path))
                     {
-                        self.as_mut().fail(session.error(error));
-                    } else if self.state != ffi::State::Failed {
-                        self.as_mut().rust_mut().state = ffi::State::Stopped;
+                        let reason = if self.extractor_error.is_empty() {
+                            session.error(error)
+                        } else {
+                            self.extractor_error.clone()
+                        };
+                        self.as_mut().fail(reason);
+                    } else {
+                        self.as_mut().rust_mut().extractor_error.clear();
+                        if self.state != ffi::State::Failed {
+                            self.as_mut().rust_mut().state = ffi::State::Stopped;
+                        }
                     }
                 }
                 Event::Command(id, error) => {

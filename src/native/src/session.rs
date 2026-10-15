@@ -15,15 +15,86 @@ pub enum PropertyValue {
     Unavailable,
 }
 
+pub(crate) const MAX_EXTRACTOR_ERROR: usize = 1024;
+
 pub enum Event {
     Property(String, PropertyValue),
     StartFile,
     FileLoaded,
     EndFile(i32),
+    ExtractorError(String),
     Command(u64, i32),
     ClientMessage(Vec<String>),
     Shutdown,
     Other,
+}
+
+fn extractor_reason(bytes: &[u8]) -> String {
+    let text = String::from_utf8_lossy(&bytes[..bytes.len().min(MAX_EXTRACTOR_ERROR)]);
+    let lower = text.to_ascii_lowercase();
+    let private_field = [
+        "cookie",
+        "authorization",
+        "headers",
+        "http-header",
+        "user-agent",
+        "referer",
+        "token=",
+        "password=",
+        "secret=",
+        "api-key:",
+        "api_key=",
+    ]
+    .iter()
+    .filter_map(|field| lower.find(field))
+    .min();
+    let drive_path = text
+        .as_bytes()
+        .windows(3)
+        .enumerate()
+        .find_map(|(index, part)| {
+            (part[0].is_ascii_alphabetic()
+                && part[1] == b':'
+                && matches!(part[2], b'/' | b'\\')
+                && (index == 0 || !text.as_bytes()[index - 1].is_ascii_alphanumeric()))
+            .then_some(index)
+        });
+    let custom_header = lower.match_indices("x-").find_map(|(index, _)| {
+        (index == 0 || text[..index].ends_with([' ', '\t', '\n', '\'', '"', '{', '[']))
+            .then_some(index)
+    });
+    let unix_path = text.char_indices().find_map(|(index, character)| {
+        (character == '/'
+            && (index == 0 || text[..index].ends_with([' ', '\t', '\n', '\'', '"', '=', '('])))
+        .then_some(index)
+    });
+    let private_start = [
+        private_field,
+        custom_header,
+        drive_path,
+        unix_path,
+        text.find(r"\\"),
+    ]
+    .into_iter()
+    .flatten()
+    .min();
+    let public = &text[..private_start.unwrap_or(text.len())];
+    let mut reason = public
+        .split_whitespace()
+        .map(|word| {
+            if word.contains("://") || word.contains('?') && word.contains('=') {
+                "[URL]"
+            } else {
+                word
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    reason.retain(|character| !character.is_control());
+    if private_start.is_some() {
+        reason.push_str(" [private data]");
+    }
+    reason
 }
 
 struct RawSession {
@@ -141,6 +212,9 @@ impl Session {
         }
         // SAFETY: Initialize is called once, on the startup worker.
         raw.api.check(unsafe { (raw.api.initialize)(handle) })?;
+        // Extractor stderr is emitted by the builtin hook as client log events.
+        raw.api
+            .check(unsafe { (raw.api.request_log_messages)(handle, c"error".as_ptr()) })?;
         for (name, format) in [
             ("time-pos", mpv::FORMAT_DOUBLE),
             ("duration", mpv::FORMAT_DOUBLE),
@@ -284,6 +358,18 @@ impl Session {
         match event.id {
             mpv::EVENT_NONE => None,
             mpv::EVENT_SHUTDOWN => Some(Event::Shutdown),
+            mpv::EVENT_LOG_MESSAGE => {
+                // SAFETY: Log strings belong to this event until the next poll.
+                let data = unsafe { &*event.data.cast::<mpv::RawLogMessage>() };
+                if data.prefix.is_null()
+                    || data.text.is_null()
+                    || unsafe { CStr::from_ptr(data.prefix) }.to_bytes() != b"ytdl_hook"
+                {
+                    return Some(Event::Other);
+                }
+                let reason = extractor_reason(unsafe { CStr::from_ptr(data.text) }.to_bytes());
+                Some(Event::ExtractorError(reason))
+            }
             mpv::EVENT_COMMAND_REPLY => Some(Event::Command(event.userdata, event.error)),
             mpv::EVENT_START_FILE => Some(Event::StartFile),
             mpv::EVENT_END_FILE => {

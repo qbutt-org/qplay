@@ -274,6 +274,7 @@ impl ffi::PlayerController {
         state.gpu.runtime_root = std::env::var_os("QPLAY_MEDIA_RUNTIME").map(PathBuf::from);
         state.state = ffi::State::Starting;
         state.error_text = QString::default();
+        state.extractor_error.clear();
 
         let task = StartTask {
             library: library_path,

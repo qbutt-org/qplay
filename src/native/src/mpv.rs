@@ -36,6 +36,7 @@ struct NodeList {
 
 pub const EVENT_NONE: c_int = 0;
 pub const EVENT_SHUTDOWN: c_int = 1;
+pub const EVENT_LOG_MESSAGE: c_int = 2;
 pub const EVENT_COMMAND_REPLY: c_int = 5;
 pub const EVENT_START_FILE: c_int = 6;
 pub const EVENT_END_FILE: c_int = 7;
@@ -66,6 +67,14 @@ pub struct RawProperty {
 pub struct RawClientMessage {
     pub count: c_int,
     pub arguments: *const *const c_char,
+}
+
+#[repr(C)]
+pub struct RawLogMessage {
+    pub prefix: *const c_char,
+    pub level: *const c_char,
+    pub text: *const c_char,
+    pub log_level: c_int,
 }
 
 #[repr(C)]
@@ -113,6 +122,7 @@ pub struct Api {
     free_node: unsafe extern "C" fn(*mut Node),
     pub command: unsafe extern "C" fn(Handle, u64, *const *const c_char) -> c_int,
     pub observe: unsafe extern "C" fn(Handle, u64, *const c_char, c_int) -> c_int,
+    pub request_log_messages: unsafe extern "C" fn(Handle, *const c_char) -> c_int,
     pub wait: unsafe extern "C" fn(Handle, c_double) -> *mut RawEvent,
     pub wakeup: unsafe extern "C" fn(Handle, Wakeup, *mut c_void),
     pub error_string: unsafe extern "C" fn(c_int) -> *const c_char,
@@ -163,6 +173,7 @@ impl Api {
             free_node: symbol!("mpv_free_node_contents"),
             command: symbol!("mpv_command_async"),
             observe: symbol!("mpv_observe_property"),
+            request_log_messages: symbol!("mpv_request_log_messages"),
             wait: symbol!("mpv_wait_event"),
             wakeup: symbol!("mpv_set_wakeup_callback"),
             error_string: symbol!("mpv_error_string"),

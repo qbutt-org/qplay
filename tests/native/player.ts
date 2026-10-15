@@ -68,26 +68,38 @@ if (timedOut || exitCode !== 0) {
 
 const evidence = JSON.parse(await readFile(`${evidencePrefix}.json`, "utf8"));
 const startupQa = Boolean(process.env.QPLAY_STARTUP_RENDER_QA);
+const extractorQa = Boolean(process.env.QPLAY_EXTRACTOR_ERROR_QA);
 
-const accepted = startupQa
-    ? evidence.mediaWaitedForRender && evidence.ipcWaitedForRender
-        && evidence.startupVideo?.w > 0 && evidence.ipcReplacementVideo?.w > 0
-    : evidence.pauseSeekResume && evidence.playbackMenuOpened
+const digest = async (path: string) => createHash("sha256").update(await readFile(path)).digest("hex");
+let accepted: boolean;
+let renders: Record<string, string>;
+
+if (extractorQa) {
+    accepted = evidence.extractorReason && evidence.privateDataRedacted && evidence.boundedBytes <= 1024
+        && evidence.errorSuccessNewError && evidence.newGenerationReason && evidence.ownedChildren === 0;
+    renders = { errorFrameSha256: await digest(`${evidencePrefix}.error.png`) };
+} else if (startupQa) {
+    accepted = evidence.mediaWaitedForRender && evidence.ipcWaitedForRender
+        && evidence.startupVideo?.w > 0 && evidence.ipcReplacementVideo?.w > 0;
+    renders = {};
+} else {
+    accepted = evidence.pauseSeekResume && evidence.playbackMenuOpened
         && evidence.speedSubmenuOpened && evidence.speedPresetApplied
         && evidence.settingsLightRendered && evidence.settingsDarkRendered
         && evidence.closeDuringStartup && evidence.ownedChildren === 0;
+    renders = {
+        frameSha256: await digest(`${evidencePrefix}.png`),
+        menuFrameSha256: await digest(`${evidencePrefix}.menu.png`),
+        speedFrameSha256: await digest(`${evidencePrefix}.speed.png`),
+        settingsLightFrameSha256: await digest(`${evidencePrefix}.settings-light.png`),
+        settingsDarkFrameSha256: await digest(`${evidencePrefix}.settings-dark.png`),
+    };
+}
+
 if (evidence.exitCode !== 0 || !accepted) {
     throw new Error("The native process did not confirm the required playback and lifetime scenario.");
 }
 
-const digest = async (path: string) => createHash("sha256").update(await readFile(path)).digest("hex");
-const renders = startupQa ? {} : {
-    frameSha256: await digest(`${evidencePrefix}.png`),
-    menuFrameSha256: await digest(`${evidencePrefix}.menu.png`),
-    speedFrameSha256: await digest(`${evidencePrefix}.speed.png`),
-    settingsLightFrameSha256: await digest(`${evidencePrefix}.settings-light.png`),
-    settingsDarkFrameSha256: await digest(`${evidencePrefix}.settings-dark.png`),
-};
 const receipt = {
     command: [executable, ...argumentsList],
     engineSha256: await digest(library),

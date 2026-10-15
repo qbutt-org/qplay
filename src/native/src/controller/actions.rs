@@ -60,6 +60,7 @@ impl ffi::PlayerController {
                 state.title = QString::default();
                 state.subtitle_text.clear();
                 state.error_text = QString::default();
+                state.extractor_error.clear();
                 state.audio_tracks.pin_mut().update(Vec::new());
                 state.subtitle_tracks.pin_mut().update(Vec::new());
                 if waiting {
