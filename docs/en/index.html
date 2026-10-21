@@ -3,63 +3,62 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>qplay — an mpv-based player for Windows</title>
-  <meta name="description" content="Local video, music and direct streams in an independent player based on mpv. Install qplay with one EXE.">
-  <meta name="theme-color" content="#151719">
+  <title>qplay — A video player with upscaling and frame generation</title>
+  <meta name="description" content="Open files and video streams in an mpv-based player. Use qplay on its own or to watch videos from qbutt and qcatch.">
+  <meta name="theme-color" content="#17181a">
   <link rel="canonical" href="https://qbutt-org.github.io/qplay/en/">
   <link rel="icon" href="../assets/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="../site.css">
-  <link rel="alternate" hreflang="ru" href="https://qbutt-org.github.io/qplay/?lang=ru">
+  <link rel="alternate" hreflang="ru" href="https://qbutt-org.github.io/qplay/">
   <script src="../locale.js"></script>
 </head>
 <body>
   <header>
-    <a class="brand" href="./"><img src="../assets/icon.svg" width="32" height="32" alt=""><span>qplay</span></a>
+    <a class="brand" href="./?lang=en"><img src="../assets/icon.svg" width="34" height="34" alt=""><span>qplay</span></a>
     <nav class="products">
-      <a href="https://qbutt-org.github.io/qbutt/en/">qbutt</a>
-      <a href="https://qbutt-org.github.io/qcatch/en/">qcatch</a>
+      <a href="https://qbutt-org.github.io/qbutt/en/?lang=en">qbutt</a>
+      <a href="https://qbutt-org.github.io/qcatch/en/?lang=en">qcatch</a>
       <a href="https://github.com/qbutt-org/qplay">GitHub</a>
     </nav>
     <nav class="languages" aria-label="Language">
       <a href="../?lang=ru" data-locale="ru" lang="ru" hreflang="ru">RU</a>
-      <a href="./" data-locale="en" lang="en" hreflang="en" aria-current="page">EN</a>
+      <a href="./?lang=en" data-locale="en" lang="en" hreflang="en" aria-current="page">EN</a>
     </nav>
   </header>
 
   <main>
     <section class="hero">
-      <h1>qplay</h1>
-      <p class="lead">A video player based on mpv</p>
-      <p class="intro">qplay plays local files and direct video streams. The player supports upscaling and frame generation.</p>
-      <div class="actions">
-        <a class="download" href="https://github.com/qbutt-org/qplay/releases/latest/download/qplay-setup.exe">Download for Windows</a>
-        <a href="https://github.com/qbutt-org/qplay/releases/latest/download/qplay-portable.zip">Portable</a>
+      <h1>Video with upscaling<br>and frame generation</h1>
+      <div>
+        <p class="intro">Open files and video streams in an mpv-based player. Use qplay on its own or to watch videos from qbutt and qcatch.</p>
+        <div class="actions">
+          <a class="download" href="https://github.com/qbutt-org/qplay/releases/latest/download/qplay-setup.exe">Download for Windows</a>
+          <a href="https://github.com/qbutt-org/qplay/releases/latest/download/qplay-portable.zip">Portable</a>
+        </div>
       </div>
     </section>
-
     <figure class="preview">
-      <img src="../assets/player-en.png" width="1426" height="853" alt="qplay playing a video with playback controls visible">
-      <figcaption>Frame from Sintel. © Blender Foundation / <a href="https://durian.blender.org/">durian.blender.org</a>, <a href="https://creativecommons.org/licenses/by/3.0/">CC BY 3.0</a>.</figcaption>
+      <img src="../assets/player-ru.png" width="1280" height="720" alt="qplay playing Sintel with its playback menu open">
+      <figcaption>Sintel. © Blender Foundation / <a href="https://durian.blender.org/">durian.blender.org</a>, <a href="https://creativecommons.org/licenses/by/3.0/">CC BY 3.0</a>.</figcaption>
     </figure>
 
     <section class="details">
-      <h2>Playback</h2>
-      <p>Use the settings menu to choose audio and subtitle tracks, change playback speed and adjust audio delay.</p>
-      <p>Upscaling and frame generation depend on your graphics card. Frame generation may need to download additional components.</p>
-    </section>
-
-    <section class="details">
-      <h2>Integration with qbutt and qcatch</h2>
-      <p><a href="https://qbutt-org.github.io/qcatch/en/">qcatch</a> finds video on the page you have open and sends it to qplay. <a href="https://qbutt-org.github.io/qbutt/en/">qbutt</a> uses the same player for online video and torrent files that are still downloading.</p>
-      <a href="https://github.com/qbutt-org/qplay/blob/main/README.en.md">More about the player</a>
+      <article>
+        <h2>Adjust playback</h2>
+        <p>Choose audio and subtitle tracks, change playback speed and adjust audio delay. Subtitle translation into English and Russian uses your Codex sign-in.</p>
+      </article>
+      <article>
+        <h2>Image enhancement</h2>
+        <p>Upscaling and intermediate frame generation depend on your GPU. Additional frame-generation components download automatically while regular playback remains available.</p>
+      </article>
     </section>
   </main>
 
   <footer>
     <span>qplay</span>
-    <a href="https://github.com/qbutt-org/qplay/releases/latest">What's new</a>
+    <a href="https://github.com/qbutt-org/qplay/releases/latest">Release notes</a>
     <a href="https://github.com/qbutt-org/qplay/issues">Report a problem</a>
-    <a href="https://github.com/qbutt-org/qplay/blob/main/LICENSE">Licenses</a>
+    <a href="https://github.com/qbutt-org/qplay/blob/main/LICENSE">License</a>
     <a href="https://github.com/qbutt-org/qplay/releases/tag/v1.0.0-sources">Media engine sources</a>
   </footer>
 </body>
