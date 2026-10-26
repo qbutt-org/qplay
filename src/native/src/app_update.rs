@@ -1,7 +1,9 @@
 use std::fs::{self, File, OpenOptions};
 use std::future::Future;
 use std::io::{Read, Write};
-use std::os::windows::process::CommandExt;
+use std::os::windows::fs::MetadataExt;
+use std::os::windows::io::{FromRawHandle, OwnedHandle};
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -11,8 +13,15 @@ use reqwest::Client;
 use reqwest::StatusCode;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use windows::Win32::System::JobObjects::IsProcessInJob;
-use windows::Win32::System::Threading::{CREATE_BREAKAWAY_FROM_JOB, GetCurrentProcess};
+use windows::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
+};
+
+use windows::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+use windows::Win32::System::Threading::{
+    OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+};
+use windows::core::PWSTR;
 
 use crate::files::move_new_file;
 use crate::runtime_info::VERSION;
@@ -57,7 +66,54 @@ struct GithubRelease {
     assets: Vec<AssetMetadata>,
 }
 
-pub fn check(cancel: &AtomicBool) -> Result<Option<CheckResult>, String> {
+fn cleanup_updates(directory: &Path) -> Result<(), String> {
+    let metadata = match fs::symlink_metadata(directory) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("Inspect update cache: {error}")),
+    };
+    if !metadata.is_dir() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 {
+        return Err("Invalid update cache directory.".into());
+    }
+    let current = parse_version(VERSION.trim()).expect("compiled qplay version");
+    for entry in fs::read_dir(directory)
+        .map_err(|error| format!("Read update cache: {error}"))?
+        .take(1000)
+    {
+        let entry = entry.map_err(|error| format!("Read update cache: {error}"))?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let Some((number, identity)) = name
+            .strip_prefix("qplay-v")
+            .and_then(|name| name.strip_suffix("-setup.exe"))
+            .and_then(|name| name.split_once('-'))
+        else {
+            continue;
+        };
+        if identity.len() < 32
+            || !identity
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() || byte == b'-')
+            || parse_version(number).is_none_or(|number| number > current)
+        {
+            continue;
+        }
+        let metadata = fs::symlink_metadata(entry.path())
+            .map_err(|error| format!("Inspect cached update: {error}"))?;
+        if !metadata.is_file() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 {
+            continue;
+        }
+        match fs::remove_file(entry.path()) {
+            Ok(()) => (),
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => (),
+            Err(error) => return Err(format!("Remove obsolete update: {error}")),
+        }
+    }
+    Ok(())
+}
+
+pub fn check(cancel: &AtomicBool, data: &Path) -> Result<Option<CheckResult>, String> {
+    cleanup_updates(&data.join("updates"))?;
     run_network(cancel, async {
         let client = client(Duration::from_secs(30))?;
         let mut response = client
@@ -215,32 +271,84 @@ pub fn download(
     result
 }
 
+fn other_instances_running(install_directory: &Path) -> Result<bool, String> {
+    let expected = fs::canonicalize(install_directory.join("qplay.exe"))
+        .map_err(|error| format!("Inspect installed qplay: {error}"))?;
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }
+        .map_err(|error| format!("Inspect qplay instances: {error}"))?;
+    let _snapshot = unsafe { OwnedHandle::from_raw_handle(snapshot.0) };
+    let mut entry = PROCESSENTRY32W {
+        dwSize: size_of::<PROCESSENTRY32W>() as u32,
+        ..Default::default()
+    };
+    unsafe { Process32FirstW(snapshot, &mut entry) }
+        .map_err(|error| format!("Inspect qplay instances: {error}"))?;
+    loop {
+        let end = entry
+            .szExeFile
+            .iter()
+            .position(|value| *value == 0)
+            .unwrap_or(entry.szExeFile.len());
+        let name = String::from_utf16_lossy(&entry.szExeFile[..end]);
+        if entry.th32ProcessID != std::process::id() && name.eq_ignore_ascii_case("qplay.exe") {
+            let process = unsafe {
+                OpenProcess(
+                    PROCESS_QUERY_LIMITED_INFORMATION,
+                    false,
+                    entry.th32ProcessID,
+                )
+            }
+            .map_err(|error| format!("Inspect other qplay instance: {error}"))?;
+            let _process = unsafe { OwnedHandle::from_raw_handle(process.0) };
+            let mut path = vec![0_u16; 32768];
+            let mut length = path.len() as u32;
+            unsafe {
+                QueryFullProcessImageNameW(
+                    process,
+                    PROCESS_NAME_WIN32,
+                    PWSTR(path.as_mut_ptr()),
+                    &mut length,
+                )
+            }
+            .map_err(|error| format!("Inspect other qplay path: {error}"))?;
+            let path = PathBuf::from(String::from_utf16_lossy(&path[..length as usize]));
+            if fs::canonicalize(path)
+                .map_err(|error| format!("Inspect other qplay path: {error}"))?
+                == expected
+            {
+                return Ok(true);
+            }
+        }
+        if unsafe { Process32NextW(snapshot, &mut entry) }.is_err() {
+            break;
+        }
+    }
+    Ok(false)
+}
+
 pub fn start_installer(
     release: &Release,
     path: &Path,
     install_directory: &Path,
 ) -> Result<(), String> {
+    if other_instances_running(install_directory)? {
+        return Err("Another qplay window is open. The update will wait until all qplay windows are closed.".into());
+    }
     let digest = release.setup.sha256.as_str();
     if !verified_file(path, release.setup.size, digest)? {
         return Err("The staged qplay update failed integrity verification.".into());
     }
-    let mut in_job = windows::core::BOOL::default();
-    unsafe { IsProcessInJob(GetCurrentProcess(), None, &mut in_job) }
-        .map_err(|error| format!("Inspect qplay process job: {error}"))?;
-
     let mut command = Command::new(path);
     command
         .arg("/CURRENTUSER")
         .arg("/VERYSILENT")
         .arg("/SUPPRESSMSGBOXES")
         .arg("/NORESTART")
+        .arg("/NOCLOSEAPPLICATIONS")
         .arg("/SP-")
         .arg(format!("/DIR={}", install_directory.display()))
         .arg(format!("/QPLAYUPDATE={}", std::process::id()))
         .current_dir(install_directory);
-    if in_job.as_bool() {
-        command.creation_flags(CREATE_BREAKAWAY_FROM_JOB.0);
-    }
     command
         .spawn()
         .map_err(|error| format!("Start qplay installer: {error}"))?;
@@ -253,7 +361,10 @@ fn verified_file(path: &Path, size: u64, digest: &str) -> Result<bool, String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(error) => return Err(format!("Inspect qplay update: {error}")),
     };
-    if !metadata.is_file() || metadata.len() != size {
+    if !metadata.is_file()
+        || metadata.len() != size
+        || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0
+    {
         return Ok(false);
     }
     let mut file = File::open(path).map_err(|error| format!("Read qplay update: {error}"))?;

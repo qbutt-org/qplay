@@ -411,6 +411,7 @@ Popup {
                     implicitHeight: 44
                     text: root.russian ? qsTr("Проверить") : qsTr("Check")
                     enabled: root.backend.updateState !== "checking" && root.backend.updateState !== "downloading"
+                             && root.backend.updateState !== "ready" && root.backend.updateState !== "installing"
                     palette.buttonText: root.textColor
                     background: Rectangle {
                         radius: 7
@@ -426,7 +427,7 @@ Popup {
                     Layout.fillWidth: true
                     implicitHeight: 44
                     visible: root.backend.updateVersion.length > 0
-                    enabled: root.backend.updateState !== "downloading"
+                    enabled: root.backend.updateState !== "downloading" && root.backend.updateState !== "installing"
                     text: {
                         if (root.backend.portable)
                             return root.russian ? qsTr("Скачать ZIP") : qsTr("Download ZIP")
@@ -483,7 +484,7 @@ Popup {
                         return root.russian ? qsTr("Загрузка: %1%").arg(root.backend.updateProgress)
                                             : qsTr("Downloading: %1%").arg(root.backend.updateProgress)
                     case "ready":
-                        return root.russian ? qsTr("Обновление готово к установке") : qsTr("Update ready to install")
+                        return root.russian ? qsTr("Обновление установится после закрытия всех окон qplay") : qsTr("The update will install when all qplay windows close")
                     case "checkFailed":
                         return root.russian ? qsTr("Не удалось проверить обновления") : qsTr("Couldn't check for updates")
                     case "installFailed":

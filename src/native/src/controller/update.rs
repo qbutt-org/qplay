@@ -11,13 +11,14 @@ use crate::app_update::{self, CheckResult, Release};
 
 enum Operation {
     Check,
-    Download(Release, PathBuf),
+    Download(Release),
 }
 
 pub struct UpdateTask {
     thread: Box<cxx_qt::CxxQtThread<ffi::PlayerController>>,
     cancel: Arc<AtomicBool>,
     operation: Operation,
+    data: PathBuf,
 }
 
 #[expect(
@@ -29,7 +30,7 @@ pub fn run_update_task(task: Box<UpdateTask>) {
     let cancel = task.cancel.clone();
     match task.operation {
         Operation::Check => {
-            let result = app_update::check(&cancel);
+            let result = app_update::check(&cancel, &task.data);
             if cancel.load(Ordering::Acquire) {
                 return;
             }
@@ -51,11 +52,14 @@ pub fn run_update_task(task: Box<UpdateTask>) {
                     }
                 }
                 player.as_mut().state_changed();
+                if player.update_state.to_string() == "available" && !player.portable {
+                    player.as_mut().download_update();
+                }
             });
         }
-        Operation::Download(release, data) => {
+        Operation::Download(release) => {
             let mut last_progress = -1;
-            let result = app_update::download(&release, &data, &cancel, |progress| {
+            let result = app_update::download(&release, &task.data, &cancel, |progress| {
                 if progress == last_progress {
                     return;
                 }
@@ -119,10 +123,13 @@ impl ffi::PlayerController {
     pub(super) fn check_updates(mut self: Pin<&mut Self>) {
         if matches!(
             self.update_state.to_string().as_str(),
-            "checking" | "downloading"
+            "checking" | "downloading" | "ready" | "installing"
         ) {
             return;
         }
+        let Some(data) = self.update_data.clone() else {
+            return;
+        };
         let thread = self.qt_thread();
         let mut state = self.as_mut().rust_mut();
         state.update_state = "checking".into();
@@ -136,6 +143,7 @@ impl ffi::PlayerController {
             thread: Box::new(thread),
             cancel,
             operation: Operation::Check,
+            data,
         };
         ffi::start_update_task(Box::new(task));
         self.as_mut().state_changed();
@@ -164,7 +172,8 @@ impl ffi::PlayerController {
         let task = UpdateTask {
             thread: Box::new(thread),
             cancel,
-            operation: Operation::Download(release, data),
+            operation: Operation::Download(release),
+            data,
         };
         ffi::start_update_task(Box::new(task));
         self.as_mut().state_changed();
@@ -182,7 +191,11 @@ impl ffi::PlayerController {
             return false;
         };
         match app_update::start_installer(release, path, install) {
-            Ok(()) => true,
+            Ok(()) => {
+                self.as_mut().rust_mut().update_state = "installing".into();
+                self.as_mut().state_changed();
+                true
+            }
             Err(error) => {
                 let mut state = self.as_mut().rust_mut();
                 state.update_error = QString::from(error);

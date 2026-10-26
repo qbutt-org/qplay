@@ -44,6 +44,8 @@ Run **qplay-setup.exe**. qplay supports Windows 10 version 2004 or later and Win
 
 For the portable version, extract **qplay-portable.zip** and run `qplay.exe`.
 
+The installed version downloads updates in the background and installs them after all player windows close. The portable version is updated manually from settings.
+
 Open a media file or a direct URL in the player window. qplay appears in the Windows **Open with** menu for common video and audio formats. It does not change your default player.
 
 ## Controls and image quality

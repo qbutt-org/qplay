@@ -21,6 +21,7 @@
 #include <QStringList>
 #include <QTextStream>
 #include <QThreadPool>
+#include <QTimer>
 
 #include "qplay_native/src/controller.cxxqt.h"
 
@@ -186,7 +187,14 @@ int main(int argc, char *argv[])
         if (!media.isEmpty())
             backend.openMedia(media);
         backend.initialize(library, profile);
+        QTimer updateTimer;
+        updateTimer.setInterval(6 * 60 * 60 * 1000);
+        QObject::connect(&updateTimer, &QTimer::timeout,
+            &backend, &Qplay::PlayerController::checkUpdates);
+        updateTimer.start();
+        backend.checkUpdates();
         result = app->exec();
+        backend.installUpdate();
     }
     QThreadPool::globalInstance()->waitForDone();
     return result;
