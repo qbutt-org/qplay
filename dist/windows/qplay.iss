@@ -94,7 +94,6 @@ Root: HKA; Subkey: "Software\RegisteredApplications"; ValueType: string; ValueNa
 
 [Run]
 Filename: "{app}\qplay.exe"; Description: "{cm:LaunchProgram,qplay}"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent; Check: not IsUpdate
-Filename: "{app}\qplay.exe"; WorkingDir: "{app}"; Flags: nowait runascurrentuser; Check: IsUpdate
 
 [CustomMessages]
 english.PortableDirectory=This folder contains a portable qplay profile. Choose a different installation folder.
