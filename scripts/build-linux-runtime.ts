@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { chmod, cp, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
 if (process.platform !== "linux" || process.arch !== "x64")
@@ -217,6 +217,12 @@ try {
     const extractor = await download("yt-dlp_linux", pins.ytDlp);
     const denoArchive = await download(`deno-${pins.deno.version}-linux.zip`, pins.deno);
     const denoLicense = await download("deno-LICENSE.md", pins.deno.license);
+    const denoNotices: { file: string; path: string }[] = [];
+    for (const notice of pins.deno.notices) {
+        if (basename(notice.file) !== notice.file)
+            throw new Error("Invalid Deno notice filename.");
+        denoNotices.push({ file: notice.file, path: await download(notice.file, notice) });
+    }
     const deno = join(cache, "deno");
     await run(["unzip", "-o", denoArchive, "deno", "-d", cache]);
     if (await digest(deno) !== pins.deno.executableSha256)
@@ -230,6 +236,8 @@ try {
         for (const name of ["yt-dlp-GPL-3.0.txt", "yt-dlp-THIRD-PARTY-LICENSES.txt", "yt-dlp-UNLICENSE.txt"])
             await cp(join(root, "licenses", name), join(notices, name));
         await cp(denoLicense, join(notices, "deno-LICENSE.md"));
+        for (const notice of denoNotices)
+            await cp(notice.path, join(notices, notice.file));
         await cp(join(mpv, "Copyright"), join(notices, "mpv-Copyright"));
         await cp(join(mpv, "LICENSE.GPL"), join(notices, "mpv-GPL"));
         await cp(join(placebo, "LICENSE"), join(notices, "libplacebo-LGPL"));
@@ -244,6 +252,7 @@ try {
         ffmpeg: pins.ffmpeg,
         ytDlp: pins.ytDlp,
         deno: pins.deno,
+        frozenTools: pins.frozenTools,
         packages: Object.fromEntries([...aptPackages].sort(([left], [right]) => left.localeCompare(right))),
         ffmpegVersion: (await run([join(tools, "ffmpeg"), "-version"])).split("\n")[0],
     };

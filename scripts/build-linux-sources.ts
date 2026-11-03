@@ -58,6 +58,23 @@ try {
         files[relative] = identity;
     }
 
+    async function addArchive(relative: string, cacheFile: string, pin: { url: string; sha256: string; size: number }): Promise<void> {
+        const path = join(cache, cacheFile);
+        if (!await Bun.file(path).exists()) {
+            await mkdir(dirname(path), { recursive: true });
+            const partial = `${path}.partial`;
+            try {
+                await command(["curl", "--fail", "--location", "--retry", "3", "--retry-all-errors", "--connect-timeout", "15", "--max-time", "600", "--output", partial, pin.url]);
+                if ((await stat(partial)).size !== pin.size || await digest(partial) !== pin.sha256)
+                    throw new Error(`The downloaded source differs from its pin: ${relative}`);
+                await rename(partial, path);
+            } finally {
+                await rm(partial, { force: true });
+            }
+        }
+        await add(relative, path, pin);
+    }
+
     for (const source of apt) {
         for (const archive of source.archives) {
             if (basename(archive.file) !== archive.file || basename(archive.name) !== archive.name)
@@ -75,20 +92,24 @@ try {
         if (!pin?.revision || !pin?.sha256 || !pin?.size)
             throw new Error(`The exact ${name} source archive is not pinned.`);
         const file = `${name}-${pin.revision}.tar.gz`;
-        const path = join(cache, "native", file);
-        if (!await Bun.file(path).exists()) {
-            await mkdir(dirname(path), { recursive: true });
-            const partial = `${path}.partial`;
-            try {
-                await command(["curl", "--fail", "--location", "--retry", "3", "--retry-all-errors", "--connect-timeout", "15", "--max-time", "600", "--output", partial, pin.url]);
-                if ((await stat(partial)).size !== pin.size || await digest(partial) !== pin.sha256)
-                    throw new Error(`The downloaded source differs from its pin: ${name}`);
-                await rename(partial, path);
-            } finally {
-                await rm(partial, { force: true });
-            }
-        }
-        await add(`native/${file}`, path, pin);
+        await addArchive(`native/${file}`, `native/${file}`, pin);
+    }
+    if (!Array.isArray(lock.linux.frozenTools?.sources) || !lock.linux.frozenTools.sources.length)
+        throw new Error("The frozen Linux tool sources have not been audited and pinned.");
+    for (const pin of lock.linux.frozenTools.sources) {
+        if (basename(pin.file) !== pin.file)
+            throw new Error("Invalid frozen tool source filename.");
+        await addArchive(`frozen-tools/${pin.file}`, `frozen/${pin.file}`, pin);
+    }
+    for (const binding of lock.linux.frozenTools.aptBindings) {
+        if (!apt.some(source => source.package === binding.sourcePackage
+            && source.archives.some(archive => archive.sha256 === binding.sha256)))
+            throw new Error(`The frozen tool source binding is missing: ${binding.component}`);
+    }
+    for (const notice of lock.linux.deno.notices) {
+        if (basename(notice.file) !== notice.file)
+            throw new Error("Invalid Deno notice filename.");
+        await add(`notices/${notice.file}`, join(runtime, "downloads", notice.file), notice);
     }
 
     const placebo = join(runtime, "source/libplacebo");
@@ -132,6 +153,7 @@ try {
             ffmpeg: lock.linux.ffmpeg,
             ytDlp: lock.linux.ytDlp,
             deno: lock.linux.deno,
+            frozenTools: lock.linux.frozenTools,
         },
         apt, files,
     }, null, 4) + "\n");
