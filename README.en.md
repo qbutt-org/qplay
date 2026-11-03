@@ -52,11 +52,17 @@ Open a media file or a direct URL in the player window. qplay appears in the Win
 
 ### Linux
 
-Linux x64 requires Ubuntu 24.04 or later with glibc 2.39+. Download [qplay-linux-x64.zip](https://github.com/qbutt-org/qplay/releases/latest/download/qplay-linux-x64.zip) and extract the archive.
+Linux x64 requires Ubuntu 24.04 or later with glibc 2.39+. Run this in a Linux or WSL terminal:
 
-Run `./qplay` for a portable instance with its profile in `userdata`. Run `./qplay --install` to install for the current user, then open qplay from the applications menu or run `~/.local/bin/qplay`.
+```sh
+curl -fsSL https://qbutt-org.github.io/qbutt/install.sh | sh -s -- qplay
+```
 
-Close the player before updating. Install a new ZIP with `~/.local/bin/qplay --install-from=/absolute/path/qplay-linux-x64.zip`. `~/.local/bin/qplay --uninstall` removes the app while preserving settings and playback data.
+After installation, open qplay from the applications menu or run `~/.local/bin/qplay`.
+
+For manual installation, download [qplay-linux-x64.tar.gz](https://github.com/qbutt-org/qplay/releases/latest/download/qplay-linux-x64.tar.gz), extract it, and run `./qplay --install`. Run `./qplay` without installation for a portable instance with its profile in `userdata`.
+
+Close the player before updating and repeat the installation command. `~/.local/bin/qplay --uninstall` removes the app while preserving settings and playback data.
 
 ## Controls and image quality
 

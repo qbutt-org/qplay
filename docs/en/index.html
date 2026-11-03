@@ -33,11 +33,35 @@
       <div>
         <p class="intro">Open files and video streams in an mpv-based player. Use qplay on its own or to watch videos from qbutt and qcatch.</p>
         <div class="actions">
+          <div class="linux-install">
+            <p class="install-label">Linux x64 / WSL (Ubuntu 24.04+, glibc 2.39+)</p>
+            <div class="install-field">
+              <code>
+                <span class="install-prompt" aria-hidden="true">$</span>
+                <span id="install-command">curl -fsSL https://qbutt-org.github.io/qbutt/install.sh | sh -s -- qplay</span>
+              </code>
+              <button class="install-copy"
+                aria-label="Copy command"
+                data-copied-label="Copied">
+                <svg class="copy-icon" aria-hidden="true" viewBox="0 0 24 24"
+                  fill="none" stroke="currentColor" stroke-width="1.8"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="9" y="9" width="11" height="11" rx="2"/>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                </svg>
+                <svg class="copied-icon" aria-hidden="true" viewBox="0 0 24 24"
+                  fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round">
+                  <path d="m5 12 4 4 10-10"/>
+                </svg>
+              </button>
+            </div>
+            <p class="install-error" role="alert" hidden>Could not copy. Copy the selected command manually.</p>
+          </div>
           <details class="editions">
             <summary class="download" data-all-label="All downloads">Download</summary>
-            <a href="https://github.com/qbutt-org/qplay/releases/latest/download/qplay-linux-x64.zip"
-              data-platform="linux-x64"
-              data-download-label="Download for Linux">Linux x64 (Ubuntu 24.04+, glibc 2.39+)</a>
+            <a href="https://github.com/qbutt-org/qplay/releases/latest/download/qplay-linux-x64.tar.gz"
+              data-platform="linux-x64">Linux x64 (tar.gz)</a>
             <a href="https://github.com/qbutt-org/qplay/releases/latest/download/qplay-setup.exe"
               data-platform="windows-x64"
               data-download-label="Download for Windows">Windows x64 (installer)</a>

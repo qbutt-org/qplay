@@ -52,11 +52,17 @@
 
 ### Linux
 
-Для Linux x64 нужны Ubuntu 24.04 или новее и glibc 2.39+. Скачайте [qplay-linux-x64.zip](https://github.com/qbutt-org/qplay/releases/latest/download/qplay-linux-x64.zip) и распакуйте архив.
+Для Linux x64 нужны Ubuntu 24.04 или новее и glibc 2.39+. Выполните в терминале Linux или WSL:
 
-Команда `./qplay` запускает переносимую версию с профилем в `userdata`. Для установки текущему пользователю выполните `./qplay --install`; затем открывайте qplay из меню приложений или командой `~/.local/bin/qplay`.
+```sh
+curl -fsSL https://qbutt-org.github.io/qbutt/install.sh | sh -s -- qplay
+```
 
-Закройте плеер перед обновлением. Новый ZIP можно установить командой `~/.local/bin/qplay --install-from=/полный/путь/qplay-linux-x64.zip`. Команда `~/.local/bin/qplay --uninstall` удаляет приложение, сохраняя настройки и данные воспроизведения.
+После установки открывайте qplay из меню приложений или командой `~/.local/bin/qplay`.
+
+Для ручной установки скачайте [qplay-linux-x64.tar.gz](https://github.com/qbutt-org/qplay/releases/latest/download/qplay-linux-x64.tar.gz), распакуйте и выполните `./qplay --install`. Команда `./qplay` без установки запускает переносимую версию с профилем в `userdata`.
+
+Закройте плеер перед обновлением и повторите команду установки. Команда `~/.local/bin/qplay --uninstall` удаляет приложение, сохраняя настройки и данные воспроизведения.
 
 ## Управление и изображение
 
