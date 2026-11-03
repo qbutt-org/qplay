@@ -90,11 +90,17 @@ if (!await Bun.file(join(ffmpeg, "configure")).exists())
 const ffmpegBuild = join(output, `build-ffmpeg-${pins.ffmpeg.version}`);
 await mkdir(ffmpegBuild, { recursive: true });
 const buildEnvironment = { PKG_CONFIG_PATH: `${prefix}/lib/pkgconfig${process.env.PKG_CONFIG_PATH ? `:${process.env.PKG_CONFIG_PATH}` : ""}` };
-if (!await Bun.file(join(ffmpegBuild, "ffbuild/config.mak")).exists()) {
-    await run([join(ffmpeg, "configure"), `--prefix=${prefix}`, "--enable-shared", "--disable-static", "--enable-pic",
-        "--enable-gpl", "--enable-version3", "--enable-libx264", "--enable-libass", "--enable-gnutls",
-        "--enable-libdav1d", "--enable-libopus", "--enable-libvpx", "--enable-vaapi", "--enable-vdpau",
-        "--enable-nvdec", "--enable-nvenc", "--disable-ffplay", "--disable-doc", "--disable-debug"], ffmpegBuild, buildEnvironment);
+const ffmpegOptions = [
+    `--prefix=${prefix}`, "--enable-shared", "--disable-static", "--enable-pic", "--enable-gpl", "--enable-version3",
+    "--enable-libx264", "--enable-libass", "--enable-gnutls", "--enable-libdav1d", "--enable-libopus",
+    "--enable-libvpx", "--enable-libmp3lame", "--enable-vaapi", "--enable-vdpau", "--enable-nvdec", "--enable-nvenc",
+    "--disable-ffplay", "--disable-doc", "--disable-debug",
+];
+const ffmpegConfiguration = join(ffmpegBuild, "ffbuild/config.mak");
+const previousConfiguration = await Bun.file(ffmpegConfiguration).exists()
+    ? (await readFile(ffmpegConfiguration, "utf8")).match(/^FFMPEG_CONFIGURATION=(.*)$/m)?.[1] : undefined;
+if (previousConfiguration !== ffmpegOptions.join(" ")) {
+    await run([join(ffmpeg, "configure"), ...ffmpegOptions], ffmpegBuild, buildEnvironment);
 }
 await run(["make", "-j2"], ffmpegBuild, buildEnvironment);
 await run(["make", "install"], ffmpegBuild, buildEnvironment);

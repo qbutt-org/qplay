@@ -84,7 +84,7 @@ export async function collectAptSources(packages: Record<string, AptPackage>, ca
             if (!await Bun.file(path).exists()) {
                 const partial = `${path}.partial`;
                 try {
-                    await output(["curl", "--fail", "--location", "--retry", "3", "--connect-timeout", "15", "--max-time", "600", "--output", partial, match[1]], cache);
+                    await output(["curl", "--fail", "--location", "--retry", "3", "--retry-all-errors", "--connect-timeout", "15", "--max-time", "600", "--output", partial, match[1]], cache);
                     if ((await stat(partial)).size !== pin.size || await digest(partial) !== pin.sha256)
                         throw new Error(`APT source download differs from its pin: ${match[2]}`);
                     await rename(partial, path);

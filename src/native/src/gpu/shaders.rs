@@ -222,6 +222,8 @@ impl ShaderPreset {
     }
 
     pub fn mpv_value(self, quality: ShaderQuality, shader_dir: &Path) -> Result<String, String> {
+        let separator = if cfg!(windows) { ";" } else { ":" };
+        let escaped_separator = format!("\\{separator}");
         self.files(quality)
             .iter()
             .map(|name| {
@@ -229,12 +231,14 @@ impl ShaderPreset {
                 if !path.is_file() {
                     return Err(format!("The shader is missing: {}", path.display()));
                 }
-                path.to_str().map(str::to_owned).ok_or_else(|| {
-                    format!("The shader path is not valid UTF-8: {}", path.display())
-                })
+                path.to_str()
+                    .map(|path| path.replace(separator, &escaped_separator))
+                    .ok_or_else(|| {
+                        format!("The shader path is not valid UTF-8: {}", path.display())
+                    })
             })
             .collect::<Result<Vec<_>, _>>()
-            .map(|paths| paths.join(";"))
+            .map(|paths| paths.join(separator))
     }
 }
 

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
 const root = resolve(import.meta.dir, "..");
@@ -110,6 +110,21 @@ try {
             await run(["patchelf", "--set-rpath", `$ORIGIN/${library}`, path]);
         }
         inventory[name] = await digest(path);
+    }
+    for (const name of Object.keys(inventory)) {
+        if (name.startsWith("translations/") && name !== "translations/qt_en.qm" && name !== "translations/qt_ru.qm") {
+            await rm(join(bundle, name));
+            delete inventory[name];
+            continue;
+        }
+        if (!name.startsWith("lib/") || !basename(name).includes(".so"))
+            continue;
+        const soname = await run(["patchelf", "--print-soname", join(bundle, name)]);
+        const runtimeName = `lib/${soname}`;
+        if (soname && !soname.includes("/") && runtimeName !== name && inventory[runtimeName] === inventory[name]) {
+            await rm(join(bundle, name));
+            delete inventory[name];
+        }
     }
     const manifest = {
         product: "qplay", version, protocolVersion: 1, platform: "linux-x64",
