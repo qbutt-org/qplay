@@ -439,7 +439,7 @@ fn client(timeout: Duration) -> Result<Client, String> {
         .map_err(|error| format!("Create qplay update client: {error}"))
 }
 
-fn parse_version(value: &str) -> Option<(u32, u32, u32)> {
+pub(crate) fn parse_version(value: &str) -> Option<(u32, u32, u32)> {
     let mut parts = value.split('.');
     let result = (
         parts.next()?.parse().ok()?,

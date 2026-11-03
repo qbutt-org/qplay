@@ -406,7 +406,7 @@ impl ffi::PlayerController {
             .then(|| PathBuf::from(media))
             .filter(|path| path.is_file());
         let input = ProbeInput {
-            ffprobe: engine_root.join(&crate::platform::executable("ffprobe")),
+            ffprobe: engine_root.join(crate::platform::executable("ffprobe")),
             local,
             duration: session.number("duration").unwrap_or(self.duration),
             stream,

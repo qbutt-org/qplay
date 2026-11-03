@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { chmod, cp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
@@ -23,8 +23,6 @@ const pins = lock.linux;
 const cache = join(output, "downloads");
 const source = join(output, "source");
 const prefix = join(output, "prefix");
-const engine = join(output, "engine");
-const tools = join(output, "tools");
 await mkdir(cache, { recursive: true });
 await mkdir(source, { recursive: true });
 
@@ -85,148 +83,198 @@ if (!await Bun.file(join(placeboBuild, "build.ninja")).exists()) {
 await run(["meson", "compile", "-C", placeboBuild, "-j", "2"]);
 await run(["meson", "install", "-C", placeboBuild]);
 
+const ffmpegArchive = await download(`ffmpeg-${pins.ffmpeg.version}.tar.gz`, pins.ffmpeg);
+const ffmpeg = join(source, `FFmpeg-${pins.ffmpeg.revision}`);
+if (!await Bun.file(join(ffmpeg, "configure")).exists())
+    await run(["tar", "-xzf", ffmpegArchive, "-C", source]);
+const ffmpegBuild = join(output, `build-ffmpeg-${pins.ffmpeg.version}`);
+await mkdir(ffmpegBuild, { recursive: true });
+const buildEnvironment = { PKG_CONFIG_PATH: `${prefix}/lib/pkgconfig${process.env.PKG_CONFIG_PATH ? `:${process.env.PKG_CONFIG_PATH}` : ""}` };
+if (!await Bun.file(join(ffmpegBuild, "ffbuild/config.mak")).exists()) {
+    await run([join(ffmpeg, "configure"), `--prefix=${prefix}`, "--enable-shared", "--disable-static", "--enable-pic",
+        "--enable-gpl", "--enable-version3", "--enable-libx264", "--enable-libass", "--enable-gnutls",
+        "--enable-libdav1d", "--enable-libopus", "--enable-libvpx", "--enable-vaapi", "--enable-vdpau",
+        "--enable-nvdec", "--enable-nvenc", "--disable-ffplay", "--disable-doc", "--disable-debug"], ffmpegBuild, buildEnvironment);
+}
+await run(["make", "-j2"], ffmpegBuild, buildEnvironment);
+await run(["make", "install"], ffmpegBuild, buildEnvironment);
+
 const mpvArchive = await download("mpv.tar.gz", pins.mpv);
 const mpv = join(source, `mpv-${pins.mpv.revision}`);
 if (!await Bun.file(join(mpv, "meson.build")).exists())
     await run(["tar", "-xzf", mpvArchive, "-C", source]);
 const mpvBuild = join(output, "build-mpv");
-const buildEnvironment = { PKG_CONFIG_PATH: `${prefix}/lib/pkgconfig${process.env.PKG_CONFIG_PATH ? `:${process.env.PKG_CONFIG_PATH}` : ""}` };
-if (!await Bun.file(join(mpvBuild, "build.ninja")).exists()) {
-    await run(["meson", "setup", mpvBuild, mpv, `--prefix=${prefix}`, "--libdir=lib", "--buildtype=release",
+const configuredMpv = await Bun.file(join(mpvBuild, "build.ninja")).exists();
+let resetMpv = false;
+if (configuredMpv) {
+    const dependencies = JSON.parse(await run(["meson", "introspect", "--dependencies", mpvBuild])) as {
+        name: string; version: string; compile_args: string[];
+    }[];
+    const codec = dependencies.find(dependency => dependency.name === "libavcodec");
+    const version = await run(["pkg-config", "--modversion", "libavcodec"], output, buildEnvironment);
+    resetMpv = !codec || codec.version !== version || !codec.compile_args.some(argument => argument.includes(prefix));
+}
+if (!configuredMpv || resetMpv) {
+    await run(["meson", "setup", ...(resetMpv ? ["--wipe"] : []), mpvBuild, mpv, `--prefix=${prefix}`, "--libdir=lib", "--buildtype=release",
         "-Dlibmpv=true", "-Dcplayer=true", "-Dtests=false", "-Dvapoursynth=disabled", "-Dlua=lua5.2"], output, buildEnvironment);
 }
 await run(["meson", "compile", "-C", mpvBuild, "-j", "2"], output, buildEnvironment);
 await run(["meson", "install", "-C", mpvBuild], output, buildEnvironment);
 
-const aptPackages = new Map<string, {
-    version: string;
-    sourcePackage: string;
-    sourceVersion: string;
-    binary: { url: string; size: number; sha256: string };
-}>();
-const recordedLibraries = new Map<string, string>();
-const operatingSystemLibraries = /^(?:ld-linux-x86-64\.so\.2|lib(?:c|m|pthread|dl|rt|resolv|util|anl)\.so\.[0-9]+)$/;
+const stage = await mkdtemp(join(output, ".stage-"));
+const engine = join(stage, "engine");
+const tools = join(stage, "tools");
+try {
+    const aptPackages = new Map<string, {
+        version: string;
+        sourcePackage: string;
+        sourceVersion: string;
+        binary: { url: string; size: number; sha256: string };
+    }>();
+    const recordedLibraries = new Map<string, string>();
+    const operatingSystemLibraries = /^(?:ld-linux-x86-64\.so\.2|lib(?:c|m|pthread|dl|rt|resolv|util|anl)\.so\.[0-9]+)$/;
 
-async function recordPackage(path: string): Promise<void> {
-    if (path.startsWith(`${prefix}/`))
-        return;
-    const owner = (await run(["dpkg-query", "-S", path])).split("\n")[0].match(/^(.+?):\s/);
-    if (!owner)
-        throw new Error(`No package owns a bundled ELF dependency: ${path}`);
-    const name = owner[1];
-    if (aptPackages.has(name))
-        return;
-    const fields = (await run(["dpkg-query", "-W", "-f=${Version}\t${source:Package}\t${source:Version}", name])).split("\t");
-    const uri = (await run(["apt-get", "--print-uris", "download", `${name}=${fields[0]}`]))
-        .match(/^'([^']+)'\s+\S+\s+(\d+)\s+SHA256:([a-f0-9]{64})$/m);
-    if (!uri)
-        throw new Error(`The exact package archive is unavailable: ${name}=${fields[0]}`);
-    aptPackages.set(name, {
-        version: fields[0], sourcePackage: fields[1], sourceVersion: fields[2],
-        binary: { url: uri[1], size: Number(uri[2]), sha256: uri[3] },
-    });
-    const copyright = `/usr/share/doc/${name.split(":")[0]}/copyright`;
-    for (const directory of [tools, engine]) {
-        const notices = join(directory, "licenses", name.replaceAll(":", "-"));
-        await mkdir(notices, { recursive: true });
-        await cp(copyright, join(notices, "copyright"));
+    async function recordPackage(path: string): Promise<void> {
+        if (path.startsWith(`${prefix}/`))
+            return;
+        const owner = (await run(["dpkg-query", "-S", path])).split("\n")[0].match(/^(.+?):\s/);
+        if (!owner)
+            throw new Error(`No package owns a bundled ELF dependency: ${path}`);
+        const name = owner[1];
+        if (aptPackages.has(name))
+            return;
+        const fields = (await run(["dpkg-query", "-W", "-f=${Version}\t${source:Package}\t${source:Version}", name])).split("\t");
+        const uri = (await run(["apt-get", "--print-uris", "download", `${name}=${fields[0]}`]))
+            .match(/^'([^']+)'\s+\S+\s+(\d+)\s+SHA\d+:[a-f0-9]+$/m);
+        const sha256 = (await run(["apt-cache", "show", `${name}=${fields[0]}`]))
+            .match(/^SHA256: ([a-f0-9]{64})$/m)?.[1];
+        if (!uri || !sha256)
+            throw new Error(`The exact package archive is unavailable: ${name}=${fields[0]}`);
+        aptPackages.set(name, {
+            version: fields[0], sourcePackage: fields[1], sourceVersion: fields[2],
+            binary: { url: uri[1], size: Number(uri[2]), sha256 },
+        });
+        const copyright = `/usr/share/doc/${name.split(":")[0]}/copyright`;
+        for (const directory of [tools, engine]) {
+            const notices = join(directory, "licenses", name.replaceAll(":", "-"));
+            await mkdir(notices, { recursive: true });
+            await cp(copyright, join(notices, "copyright"));
+        }
     }
-}
 
-async function dependencies(input: string, libraryDirectory: string): Promise<void> {
-    const listing = await run(["ldd", input], output, { LD_LIBRARY_PATH: `${prefix}/lib` });
-    if (listing.includes("not found"))
-        throw new Error(`Unresolved ELF dependency of ${input}`);
-    for (const line of listing.split("\n")) {
-        const match = line.match(/^\s*(\S+) => (\/\S+) \(/);
-        if (!match || operatingSystemLibraries.test(match[1]))
-            continue;
-        const path = await realpath(match[2]);
-        const identity = `${libraryDirectory}/${match[1]}`;
-        const previous = recordedLibraries.get(identity);
-        if (previous && previous !== path)
-            throw new Error(`Conflicting ELF dependency: ${match[1]}`);
-        if (previous)
-            continue;
-        recordedLibraries.set(identity, path);
-        await mkdir(libraryDirectory, { recursive: true });
-        const destination = join(libraryDirectory, match[1]);
+    async function dependencies(input: string, libraryDirectory: string): Promise<void> {
+        const listing = await run(["ldd", input], output, { LD_LIBRARY_PATH: `${prefix}/lib` });
+        if (listing.includes("not found"))
+            throw new Error(`Unresolved ELF dependency of ${input}`);
+        for (const line of listing.split("\n")) {
+            const match = line.match(/^\s*(\S+) => (\/\S+) \(/);
+            if (!match || operatingSystemLibraries.test(match[1]))
+                continue;
+            const path = await realpath(match[2]);
+            const identity = `${libraryDirectory}/${match[1]}`;
+            const previous = recordedLibraries.get(identity);
+            if (previous && previous !== path)
+                throw new Error(`Conflicting ELF dependency: ${match[1]}`);
+            if (previous)
+                continue;
+            recordedLibraries.set(identity, path);
+            await mkdir(libraryDirectory, { recursive: true });
+            const destination = join(libraryDirectory, match[1]);
+            await cp(path, destination);
+            await chmod(destination, 0o755);
+            await run(["patchelf", "--set-rpath", "$ORIGIN", destination]);
+            await recordPackage(path);
+        }
+    }
+
+    await mkdir(engine, { recursive: true });
+    await mkdir(tools, { recursive: true });
+    for (const name of ["ffmpeg", "ffprobe"]) {
+        const path = await realpath(join(prefix, "bin", name));
+        for (const destination of [tools, engine]) {
+            const executable = join(destination, name);
+            await cp(path, executable);
+            await chmod(executable, 0o755);
+            await dependencies(path, join(destination, "lib"));
+            await run(["patchelf", "--set-rpath", "$ORIGIN/lib", executable]);
+        }
+    }
+    for (const [input, name] of [[join(prefix, "bin/mpv"), "mpv"], [join(prefix, "lib/libmpv.so.2"), "libmpv.so.2"]]) {
+        const path = await realpath(input);
+        const destination = join(engine, name);
         await cp(path, destination);
         await chmod(destination, 0o755);
-        await run(["patchelf", "--set-rpath", "$ORIGIN", destination]);
-        await recordPackage(path);
+        await dependencies(path, join(engine, "lib"));
+        await run(["patchelf", "--set-rpath", "$ORIGIN/lib", destination]);
     }
-}
-
-await mkdir(engine, { recursive: true });
-await mkdir(tools, { recursive: true });
-for (const name of ["ffmpeg", "ffprobe"]) {
-    const path = await realpath(await run(["which", name]));
-    await recordPackage(path);
-    for (const destination of [tools, engine]) {
-        const executable = join(destination, name);
-        await cp(path, executable);
-        await chmod(executable, 0o755);
-        await dependencies(path, join(destination, "lib"));
-        await run(["patchelf", "--set-rpath", "$ORIGIN/lib", executable]);
+    await recordPackage("/usr/include/ffnvcodec/nvEncodeAPI.h");
+    const extractor = await download("yt-dlp_linux", pins.ytDlp);
+    const denoArchive = await download(`deno-${pins.deno.version}-linux.zip`, pins.deno);
+    const denoLicense = await download("deno-LICENSE.md", pins.deno.license);
+    const deno = join(cache, "deno");
+    await run(["unzip", "-o", denoArchive, "deno", "-d", cache]);
+    if (await digest(deno) !== pins.deno.executableSha256)
+        throw new Error("The Deno executable differs from its pin.");
+    for (const directory of [tools, engine]) {
+        await cp(extractor, join(directory, "yt-dlp"));
+        await cp(deno, join(directory, "deno"));
+        await chmod(join(directory, "yt-dlp"), 0o755);
+        await chmod(join(directory, "deno"), 0o755);
+        const notices = join(directory, "licenses");
+        for (const name of ["yt-dlp-GPL-3.0.txt", "yt-dlp-THIRD-PARTY-LICENSES.txt", "yt-dlp-UNLICENSE.txt"])
+            await cp(join(root, "licenses", name), join(notices, name));
+        await cp(denoLicense, join(notices, "deno-LICENSE.md"));
+        await cp(join(mpv, "Copyright"), join(notices, "mpv-Copyright"));
+        await cp(join(mpv, "LICENSE.GPL"), join(notices, "mpv-GPL"));
+        await cp(join(placebo, "LICENSE"), join(notices, "libplacebo-LGPL"));
+        await cp(join(ffmpeg, "COPYING.GPLv3"), join(notices, "ffmpeg-GPL-3.0"));
     }
-}
-for (const [input, name] of [[join(prefix, "bin/mpv"), "mpv"], [join(prefix, "lib/libmpv.so.2"), "libmpv.so.2"]]) {
-    const path = await realpath(input);
-    const destination = join(engine, name);
-    await cp(path, destination);
-    await chmod(destination, 0o755);
-    await dependencies(path, join(engine, "lib"));
-    await run(["patchelf", "--set-rpath", "$ORIGIN/lib", destination]);
-}
-const extractor = await download("yt-dlp_linux", pins.ytDlp);
-const denoArchive = await download(`deno-${pins.deno.version}-linux.zip`, pins.deno);
-const deno = join(cache, "deno");
-await run(["unzip", "-o", denoArchive, "deno", "-d", cache]);
-if (await digest(deno) !== pins.deno.executableSha256)
-    throw new Error("The Deno executable differs from its pin.");
-for (const directory of [tools, engine]) {
-    await cp(extractor, join(directory, "yt-dlp"));
-    await cp(deno, join(directory, "deno"));
-    await chmod(join(directory, "yt-dlp"), 0o755);
-    await chmod(join(directory, "deno"), 0o755);
-    const notices = join(directory, "licenses");
-    for (const name of ["yt-dlp-GPL-3.0.txt", "yt-dlp-THIRD-PARTY-LICENSES.txt", "yt-dlp-UNLICENSE.txt"])
-        await cp(join(root, "licenses", name), join(notices, name));
-    await writeFile(join(notices, "deno-LICENSE.txt"), `${await run([join(directory, "deno"), "license"])}\n`);
-    await cp(join(mpv, "Copyright"), join(notices, "mpv-Copyright"));
-    await cp(join(mpv, "LICENSE.GPL"), join(notices, "mpv-GPL"));
-    await cp(join(placebo, "LICENSE"), join(notices, "libplacebo-LGPL"));
-}
 
-const sources = {
-    platform: pins.platform,
-    minimumGlibc: pins.minimumGlibc,
-    mpv: pins.mpv,
-    libplacebo: { ...pins.libplacebo, submodules: submodules.split("\n").map(line => line.trim()) },
-    ytDlp: pins.ytDlp,
-    deno: pins.deno,
-    packages: Object.fromEntries([...aptPackages].sort(([left], [right]) => left.localeCompare(right))),
-    ffmpegVersion: (await run([join(tools, "ffmpeg"), "-version"])).split("\n")[0],
-};
-for (const directory of [tools, engine])
-    await writeFile(join(directory, "sources.json"), `${JSON.stringify(sources, null, 4)}\n`);
+    const sources = {
+        platform: pins.platform,
+        minimumGlibc: pins.minimumGlibc,
+        mpv: pins.mpv,
+        libplacebo: { ...pins.libplacebo, submodules: submodules.split("\n").map(line => line.trim()) },
+        ffmpeg: pins.ffmpeg,
+        ytDlp: pins.ytDlp,
+        deno: pins.deno,
+        packages: Object.fromEntries([...aptPackages].sort(([left], [right]) => left.localeCompare(right))),
+        ffmpegVersion: (await run([join(tools, "ffmpeg"), "-version"])).split("\n")[0],
+    };
+    for (const directory of [tools, engine])
+        await writeFile(join(directory, "sources.json"), `${JSON.stringify(sources, null, 4)}\n`);
 
-async function inventory(directory: string, prefix = ""): Promise<Record<string, string>> {
-    const files: Record<string, string> = {};
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
-        const path = join(directory, entry.name);
-        if (entry.isDirectory())
-            Object.assign(files, await inventory(path, `${prefix}${entry.name}/`));
-        else if (entry.isFile())
-            files[`${prefix}${entry.name}`] = await digest(path);
-        else
-            throw new Error(`The runtime contains a link or special file: ${path}`);
+    async function inventory(directory: string, prefix = ""): Promise<Record<string, string>> {
+        const files: Record<string, string> = {};
+        for (const entry of await readdir(directory, { withFileTypes: true })) {
+            const path = join(directory, entry.name);
+            if (entry.isDirectory())
+                Object.assign(files, await inventory(path, `${prefix}${entry.name}/`));
+            else if (entry.isFile())
+                files[`${prefix}${entry.name}`] = await digest(path);
+            else
+                throw new Error(`The runtime contains a link or special file: ${path}`);
+        }
+        return Object.fromEntries(Object.entries(files).sort(([left], [right]) => left.localeCompare(right)));
     }
-    return Object.fromEntries(Object.entries(files).sort(([left], [right]) => left.localeCompare(right)));
+    const newInventory = await inventory(engine);
+    for (const name of ["engine", "tools"]) {
+        const previous = join(output, name);
+        if (await Bun.file(join(previous, "sources.json")).exists()) {
+            const previousInventory = await inventory(previous);
+            for (const [file, hash] of Object.entries(previousInventory)) {
+                if (pins.runtime.files[file] !== hash)
+                    throw new Error(`Refusing to replace an unowned or modified runtime file: ${name}/${file}`);
+            }
+            await rm(previous, { recursive: true });
+        }
+        await rename(join(stage, name), previous);
+    }
+    pins.runtime = { files: newInventory, sources };
+    await writeFile(join(output, "linux-runtime.json"), `${JSON.stringify(pins, null, 2)}\n`);
+    if (values["update-lock"])
+        await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+    console.log(JSON.stringify({ engine: join(output, "engine"), tools: join(output, "tools"), lock: join(output, "linux-runtime.json"), engineSha256: pins.runtime.files["libmpv.so.2"] }, null, 4));
+} finally {
+    await rm(stage, { recursive: true, force: true });
 }
-pins.runtime = { files: await inventory(engine), sources };
-await writeFile(join(output, "linux-runtime.json"), `${JSON.stringify(pins, null, 2)}\n`);
-if (values["update-lock"])
-    await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
-console.log(JSON.stringify({ engine, tools, lock: join(output, "linux-runtime.json"), engineSha256: pins.runtime.files["libmpv.so.2"] }, null, 4));

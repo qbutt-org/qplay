@@ -1,15 +1,16 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createConnection, type Socket } from "node:net";
 import { join, resolve } from "node:path";
 
-const [bundleArgument, mediaArgument, evidenceArgument] = Bun.argv.slice(2);
-if (process.platform !== "linux" || !bundleArgument || !mediaArgument || !evidenceArgument)
-    throw new Error("Usage on Linux: bun tests/native/linux.ts <portable bundle> <legal media> <evidence directory>");
+const [bundleArgument, mediaArgument, evidenceArgument, archiveArgument] = Bun.argv.slice(2);
+if (process.platform !== "linux" || !bundleArgument || !mediaArgument || !evidenceArgument || !archiveArgument)
+    throw new Error("Usage on Linux: bun tests/native/linux.ts <portable bundle> <legal media> <evidence directory> <portable ZIP>");
 const bundle = resolve(bundleArgument);
 const media = resolve(mediaArgument);
+const archive = resolve(archiveArgument);
 const evidence = resolve(evidenceArgument);
 const repository = resolve(import.meta.dir, "../..");
 assert(evidence !== repository && !evidence.startsWith(`${repository}/`), "Keep evidence outside the checkout.");
@@ -76,6 +77,11 @@ for (const [name, path] of Object.entries(metadata.tools) as [string, string][])
 }
 assert(metadata.onlineTools.deno?.path);
 await run(metadata.onlineTools.deno.path, ["--version"]);
+const inspected = JSON.parse(await run(metadata.tools.ffprobe, [
+    "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height,sample_aspect_ratio", "-of", "json", media,
+]));
+const expectedVideo = inspected.streams[0];
+assert(expectedVideo?.width > 0 && expectedVideo?.height > 0);
 
 const socketPath = join(runtime, "qbutt-mpv-linux.sock");
 assert(Buffer.byteLength(socketPath) < 108, "Use a shorter evidence directory for Unix IPC.");
@@ -146,6 +152,15 @@ try {
     assert.equal(await command(["get_property", "path"]), media);
     const width = Number(await command(["get_property", "video-params/w"]));
     const height = Number(await command(["get_property", "video-params/h"]));
+    assert.equal(width, expectedVideo.width);
+    assert.equal(height, expectedVideo.height);
+    const outputWidth = Number(await command(["get_property", "video-out-params/w"]));
+    const outputHeight = Number(await command(["get_property", "video-out-params/h"]));
+    assert.equal(outputWidth, expectedVideo.width);
+    assert.equal(outputHeight, expectedVideo.height);
+    const [sarNumerator, sarDenominator] = expectedVideo.sample_aspect_ratio.split(":").map(Number);
+    const pixelAspectRatio = Number(await command(["get_property", "video-out-params/par"]));
+    assert(Math.abs(pixelAspectRatio - sarNumerator / sarDenominator) < 0.00001);
     await command(["set_property", "pause", true]);
     assert.equal(await command(["get_property", "pause"]), true);
     await command(["seek", 4, "absolute+exact"]);
@@ -159,9 +174,10 @@ try {
     await Bun.sleep(500);
     assert(Number(await command(["get_property", "time-pos"])) > 4);
     await run(portable, ["--install"], 1);
+    await run(installed, [`--install-from=${archive}`], 1);
     await command(["quit"]);
     assert.equal(await exited, 0);
-    await writeFile(join(evidence, "playback.json"), `${JSON.stringify({ duration, width, height, pauseSeekResume: true, concurrentInstallRefused: true }, null, 4)}\n`);
+    await writeFile(join(evidence, "playback.json"), `${JSON.stringify({ duration, width, height, outputWidth, outputHeight, pixelAspectRatio, pauseSeekResume: true, concurrentInstallRefused: true }, null, 4)}\n`);
 } finally {
     clearTimeout(playerTimeout);
     socket?.destroy();
@@ -171,6 +187,19 @@ try {
     }
     await writeFile(join(evidence, "player.log"), playerLog);
 }
+
+const beforeUpdate = await stat(installed);
+assert.equal(await run(installed, [`--install-from=${archive}`]), installed);
+assert.notEqual((await stat(installed)).ino, beforeUpdate.ino, "The archive update did not replace the installation.");
+assert(!await Bun.file(join(data, "qplay/app/qplay.portable")).exists());
+const malformed = join(evidence, "invalid.zip");
+await writeFile(malformed, "Generated invalid ZIP fixture.\n");
+const beforeFailure = await stat(installed);
+await run(installed, [`--install-from=${malformed}`], 1);
+assert.equal((await stat(installed)).ino, beforeFailure.ino, "A failed archive update changed the installed application.");
+await rm(malformed);
+const afterUpdate = JSON.parse(await run(installed, ["--runtime-info-json"]));
+assert.equal(afterUpdate.version, version.version);
 
 const unowned = join(data, "qplay/app/preserved-unowned.fixture");
 await writeFile(unowned, "Unrelated files may not be deleted.\n");
@@ -186,6 +215,7 @@ const receipt = {
     version, metadata,
     portableSha256: await sha256(portable), mediaSha256: await sha256(media),
     installRepeatUninstall: true, dataPreserved: true, unownedFilesPreserved: true,
+    archiveUpdate: true, malformedUpdatePreservedInstallation: true,
     toolsWorkedWithoutSdkOrCallerPath: true,
 };
 await writeFile(join(evidence, "commands.jsonl"), `${log.join("\n")}\n`);

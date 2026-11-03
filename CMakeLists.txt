@@ -119,6 +119,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     qt_generate_deploy_qml_app_script(
         TARGET qplay-native
         OUTPUT_SCRIPT qplay_deploy_script
+        POST_EXCLUDE_REGEXES
+            ".*/ld-linux-x86-64\\.so\\.2$"
+            ".*/lib(c|m|pthread|dl|rt|resolv|util|anl)\\.so\\.[0-9.]+$"
     )
     install(SCRIPT ${qplay_deploy_script})
 endif()

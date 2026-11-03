@@ -37,6 +37,7 @@ int main(int argc, char *argv[])
 #ifdef Q_OS_LINUX
             || (std::strcmp(argv[i], "--install") == 0)
             || (std::strcmp(argv[i], "--uninstall") == 0)
+            || (std::strncmp(argv[i], "--install-from=", 15) == 0)
 #endif
             )
         {
@@ -59,7 +60,8 @@ int main(int argc, char *argv[])
 #ifdef Q_OS_LINUX
     if (app->arguments().size() == 2
         && (app->arguments().at(1) == QStringLiteral("--install")
-            || app->arguments().at(1) == QStringLiteral("--uninstall")))
+            || app->arguments().at(1) == QStringLiteral("--uninstall")
+            || app->arguments().at(1).startsWith(QStringLiteral("--install-from="))))
     {
         try
         {

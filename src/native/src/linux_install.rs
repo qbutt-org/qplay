@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
+use std::io::Read;
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 
@@ -10,8 +11,10 @@ use crate::platform::xdg_directory;
 use crate::runtime_info::{VERSION, verify_bundle, verify_bundle_version};
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct Manifest {
     version: String,
+    protocol_version: u32,
     files: BTreeMap<String, String>,
 }
 
@@ -87,6 +90,13 @@ fn commit(stage: &Path, target: &Path, version: &str) -> Result<(), String> {
         let manifest: Manifest = serde_json::from_slice(&bytes)
             .map_err(|error| format!("Read installed qplay manifest: {error}"))?;
         verify_bundle_version(target, &manifest.version)?;
+        let installed_version = crate::app_update::parse_version(&manifest.version)
+            .ok_or("The installed qplay version is invalid.")?;
+        let desired_version = crate::app_update::parse_version(version)
+            .ok_or("The requested qplay version is invalid.")?;
+        if installed_version > desired_version {
+            return Err("A newer qplay is already installed.".into());
+        }
         verify_owned_directory(target, target, &manifest)?;
         if other_instances_running(target)? {
             return Err(
@@ -129,6 +139,25 @@ fn commit(stage: &Path, target: &Path, version: &str) -> Result<(), String> {
 pub fn install_directory(source: &Path) -> Result<String, String> {
     verify_bundle(source)?;
     let target = destination()?;
+    if target.join("build-manifest.json").exists() {
+        let bytes = fs::read(target.join("build-manifest.json"))
+            .map_err(|error| format!("Read installed qplay manifest: {error}"))?;
+        let installed: Manifest = serde_json::from_slice(&bytes)
+            .map_err(|error| format!("Read installed qplay manifest: {error}"))?;
+        let installed_version = crate::app_update::parse_version(&installed.version)
+            .ok_or("The installed qplay version is invalid.")?;
+        let current_version =
+            crate::app_update::parse_version(VERSION.trim()).expect("compiled qplay version");
+        if installed_version > current_version {
+            verify_bundle_version(&target, &installed.version)?;
+            if installed.protocol_version != 1 {
+                return Err(
+                    "A newer qplay with a different playback protocol is installed.".into(),
+                );
+            }
+            return Ok(target.join("qplay").to_string_lossy().into_owned());
+        }
+    }
     if fs::canonicalize(source).ok() != fs::canonicalize(&target).ok() {
         let stage = stage_directory(&target)?;
         let result = (|| {
@@ -228,6 +257,35 @@ pub fn install_archive(archive: &Path, target: &Path, version: &str) -> Result<(
     result
 }
 
+pub fn install_from_archive(path: &Path) -> Result<String, String> {
+    if !path.is_absolute() {
+        return Err("The update archive needs an absolute path.".into());
+    }
+    let file = File::open(path).map_err(|error| format!("Open qplay update: {error}"))?;
+    let mut archive =
+        ZipArchive::new(file).map_err(|error| format!("Read qplay update: {error}"))?;
+    let mut entry = archive
+        .by_name("build-manifest.json")
+        .map_err(|error| format!("Find qplay update manifest: {error}"))?;
+    if entry.size() > 1024 * 1024 {
+        return Err("The qplay update manifest is too large.".into());
+    }
+    let mut bytes = Vec::new();
+    entry
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("Read qplay update manifest: {error}"))?;
+    let manifest: Manifest = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("Read qplay update manifest: {error}"))?;
+    if manifest.protocol_version != 1
+        || crate::app_update::parse_version(&manifest.version).is_none()
+    {
+        return Err("The qplay update has an unsupported version or playback protocol.".into());
+    }
+    let target = destination()?;
+    install_archive(path, &target, &manifest.version)?;
+    Ok(target.join("qplay").to_string_lossy().into_owned())
+}
+
 fn register(target: &Path) -> Result<(), String> {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -241,10 +299,7 @@ fn register(target: &Path) -> Result<(), String> {
     match fs::symlink_metadata(&link) {
         Ok(metadata)
             if metadata.file_type().is_symlink()
-                && fs::read_link(&link).ok().as_ref() == Some(&executable) =>
-        {
-            ()
-        }
+                && fs::read_link(&link).ok().as_ref() == Some(&executable) => {}
         Ok(_) => {
             return Err("The user qplay command is already owned by another installation.".into());
         }

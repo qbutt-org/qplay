@@ -372,6 +372,9 @@ fn installation_command(action: &str, source: &str) -> Result<String, String> {
     match action {
         "--install" => crate::linux_install::install_directory(std::path::Path::new(source)),
         "--uninstall" => crate::linux_install::uninstall(),
+        action if action.starts_with("--install-from=") => {
+            crate::linux_install::install_from_archive(std::path::Path::new(&action[15..]))
+        }
         _ => Err("Unknown installation action.".into()),
     }
 }
