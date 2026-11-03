@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="../site.css">
   <link rel="alternate" hreflang="ru" href="https://qbutt-org.github.io/qplay/">
   <script src="../locale.js"></script>
+  <script src="../downloads.js" defer></script>
 </head>
 <body>
   <header>
@@ -32,8 +33,13 @@
       <div>
         <p class="intro">Open files and video streams in an mpv-based player. Use qplay on its own or to watch videos from qbutt and qcatch.</p>
         <div class="actions">
-          <a class="download" href="https://github.com/qbutt-org/qplay/releases/latest/download/qplay-setup.exe">Download for Windows</a>
-          <a href="https://github.com/qbutt-org/qplay/releases/latest/download/qplay-portable.zip">Portable</a>
+          <details class="editions">
+            <summary class="download" data-all-label="All downloads">Download</summary>
+            <a href="https://github.com/qbutt-org/qplay/releases/latest/download/qplay-setup.exe"
+              data-platform="windows-x64"
+              data-download-label="Download for Windows">Windows x64 (installer)</a>
+            <a href="https://github.com/qbutt-org/qplay/releases/latest/download/qplay-portable.zip">Windows x64 (Portable)</a>
+          </details>
         </div>
       </div>
     </section>
