@@ -57,10 +57,13 @@ impl VerifiedMediaTools {
         let bundle = runtime_dir.parent().ok_or(SubtitleSourceError::Source)?;
         crate::runtime_info::verify_bundle(bundle).map_err(|_| SubtitleSourceError::Source)?;
         Ok(Self {
-            ffmpeg: crate::runtime_info::tool(runtime_dir, "ffmpeg.exe")
+            ffmpeg: crate::runtime_info::tool(runtime_dir, &crate::platform::executable("ffmpeg"))
                 .map_err(|_| SubtitleSourceError::Source)?,
-            ffprobe: crate::runtime_info::tool(runtime_dir, "ffprobe.exe")
-                .map_err(|_| SubtitleSourceError::Source)?,
+            ffprobe: crate::runtime_info::tool(
+                runtime_dir,
+                &crate::platform::executable("ffprobe"),
+            )
+            .map_err(|_| SubtitleSourceError::Source)?,
             runtime_dir: runtime_dir.to_owned(),
         })
     }

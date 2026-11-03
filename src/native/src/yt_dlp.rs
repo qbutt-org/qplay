@@ -10,7 +10,20 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use zip::ZipArchive;
 
-use crate::files::move_new_file;
+use crate::files::{make_executable, move_new_file};
+
+#[cfg(windows)]
+const EXTRACTOR_ASSET: &str = "yt-dlp.exe";
+#[cfg(target_os = "linux")]
+const EXTRACTOR_ASSET: &str = "yt-dlp_linux";
+#[cfg(windows)]
+const BUNDLED_TOOL_PIN: &str = "tools/yt-dlp.exe";
+#[cfg(target_os = "linux")]
+const BUNDLED_TOOL_PIN: &str = "yt-dlp";
+#[cfg(windows)]
+const DENO_TARGET: &str = "x86_64-pc-windows-msvc";
+#[cfg(target_os = "linux")]
+const DENO_TARGET: &str = "x86_64-unknown-linux-gnu";
 
 const RELEASE_URL: &str =
     "https://api.github.com/repos/yt-dlp/yt-dlp-nightly-builds/releases/latest";
@@ -80,15 +93,21 @@ struct RuntimeFiles {
 
 impl YtDlp {
     pub fn new(library: &Path, data: &Path) -> Result<Self, String> {
-        let lock: BuildLock = serde_json::from_str(include_str!(concat!(
+        let lock: serde_json::Value = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../../upstream-lock.json"
         )))
         .map_err(|error| format!("Read pinned online tools: {error}"))?;
+        #[cfg(target_os = "linux")]
+        let lock = lock
+            .get("linux")
+            .ok_or("The Linux online tool pins are missing.")?;
+        let lock: BuildLock = serde_json::from_value(lock.to_owned())
+            .map_err(|error| format!("Read pinned online tools: {error}"))?;
         let bundled_hash = lock
             .runtime
             .files
-            .get("tools/yt-dlp.exe")
+            .get(BUNDLED_TOOL_PIN)
             .ok_or("Pinned yt-dlp digest is missing.")?;
         if parse_version(&lock.yt_dlp.version).is_none()
             || !valid_digest(bundled_hash)
@@ -98,7 +117,7 @@ impl YtDlp {
             || lock.deno.size > MAX_EXECUTABLE_SIZE
             || lock.deno.url
                 != format!(
-                    "https://github.com/denoland/deno/releases/download/v{}/deno-x86_64-pc-windows-msvc.zip",
+                    "https://github.com/denoland/deno/releases/download/v{}/deno-{DENO_TARGET}.zip",
                     lock.deno.version
                 )
         {
@@ -108,8 +127,8 @@ impl YtDlp {
             .parent()
             .ok_or("The mpv library needs an engine directory.")?;
         Ok(Self {
-            bundled: engine.join("yt-dlp.exe"),
-            updates: data
+            bundled: engine.join(crate::platform::executable("yt-dlp")),
+            updates: crate::platform::cache_directory(data)
                 .join("yt-dlp")
                 .join(format!("deno-{}", lock.deno.version)),
             bundled_version: lock.yt_dlp.version,
@@ -173,7 +192,14 @@ impl YtDlp {
     }
 
     pub fn deno_path(&self) -> Result<Option<PathBuf>, String> {
-        let path = self.updates.join("deno.exe");
+        #[cfg(target_os = "linux")]
+        {
+            let bundled = self.bundled.with_file_name("deno");
+            if verified_file(&bundled, &self.deno.executable_sha256, None)? {
+                return Ok(Some(bundled));
+            }
+        }
+        let path = self.updates.join(crate::platform::executable("deno"));
         Ok(verified_file(&path, &self.deno.executable_sha256, None)?.then_some(path))
     }
 
@@ -201,8 +227,10 @@ impl YtDlp {
         }
 
         let target = self.updates.join(format!(
-            "yt-dlp-{}-{}.exe",
-            self.bundled_version, self.bundled_hash
+            "yt-dlp-{}-{}{}",
+            self.bundled_version,
+            self.bundled_hash,
+            std::env::consts::EXE_SUFFIX
         ));
         if verified_file(&target, &self.bundled_hash, None)? {
             return Ok(Some(Executable {
@@ -241,6 +269,7 @@ impl YtDlp {
             if !verified_file(&partial, &self.bundled_hash, None)? {
                 return Err("Bundled yt-dlp copy failed integrity verification.".into());
             }
+            make_executable(&partial).map_err(|error| format!("Set executable mode: {error}"))?;
             if let Err(error) = move_new_file(&partial, &target) {
                 if !verified_file(&target, &self.bundled_hash, None)? {
                     return Err(format!("Install bundled yt-dlp copy: {error}"));
@@ -260,10 +289,10 @@ impl YtDlp {
         cancel: &AtomicBool,
         progress: &mut impl FnMut(u64, u64),
     ) -> Result<bool, String> {
-        let target = self.updates.join("deno.exe");
-        if verified_file(&target, &self.deno.executable_sha256, None)? {
+        if self.deno_path()?.is_some() {
             return Ok(true);
         }
+        let target = self.updates.join(crate::platform::executable("deno"));
         if fs::symlink_metadata(&target).is_ok() {
             fs::remove_file(&target)
                 .map_err(|error| format!("Remove invalid Deno executable: {error}"))?;
@@ -309,7 +338,7 @@ impl YtDlp {
                 return Err("Deno archive has unexpected contents.".into());
             }
             let mut deno = archive
-                .by_name("deno.exe")
+                .by_name(&crate::platform::executable("deno"))
                 .map_err(|error| format!("Find Deno executable: {error}"))?;
             if deno.size() > MAX_EXECUTABLE_SIZE {
                 return Err("Deno executable exceeds the size limit.".into());
@@ -332,6 +361,8 @@ impl YtDlp {
             if !verified_file(&executable_path, &self.deno.executable_sha256, None)? {
                 return Err("Deno executable failed integrity verification.".into());
             }
+            make_executable(&executable_path)
+                .map_err(|error| format!("Set executable mode: {error}"))?;
             if let Err(error) = move_new_file(&executable_path, &target) {
                 if !verified_file(&target, &self.deno.executable_sha256, None)? {
                     return Err(format!("Install Deno: {error}"));
@@ -424,9 +455,12 @@ impl YtDlp {
         let asset = release
             .assets
             .into_iter()
-            .find(|asset| asset.name == "yt-dlp.exe")
-            .ok_or("yt-dlp release has no Windows executable.")?;
-        let expected_url = format!("{}{}/yt-dlp.exe", RELEASE_DOWNLOAD_PREFIX, release.tag_name);
+            .find(|asset| asset.name == EXTRACTOR_ASSET)
+            .ok_or("yt-dlp release has no executable for this platform.")?;
+        let expected_url = format!(
+            "{}{}/{EXTRACTOR_ASSET}",
+            RELEASE_DOWNLOAD_PREFIX, release.tag_name
+        );
         if asset.browser_download_url != expected_url
             || asset.size == 0
             || asset.size > MAX_EXECUTABLE_SIZE
@@ -439,7 +473,12 @@ impl YtDlp {
             .and_then(|value| value.strip_prefix("sha256:"))
             .filter(|value| valid_digest(value))
             .ok_or("yt-dlp release asset has no SHA-256 digest.")?;
-        let filename = format!("yt-dlp-{}-{}.exe", release.tag_name, digest);
+        let filename = format!(
+            "yt-dlp-{}-{}{}",
+            release.tag_name,
+            digest,
+            std::env::consts::EXE_SUFFIX
+        );
         let target = self.updates.join(filename);
         if verified_file(&target, digest, Some(asset.size))? {
             return Ok(Some(Executable {
@@ -475,6 +514,7 @@ impl YtDlp {
             )? {
                 return Ok(None);
             }
+            make_executable(&partial).map_err(|error| format!("Set executable mode: {error}"))?;
             if let Err(error) = move_new_file(&partial, &target) {
                 if !verified_file(&target, digest, Some(asset.size))? {
                     return Err(format!("Install yt-dlp update: {error}"));
@@ -620,7 +660,9 @@ fn verified_file(path: &Path, digest: &str, size: Option<u64>) -> Result<bool, S
 }
 
 fn parse_filename(name: &str) -> Option<((u32, u32, u32, u32), &str, &str)> {
-    let name = name.strip_prefix("yt-dlp-")?.strip_suffix(".exe")?;
+    let name = name
+        .strip_prefix("yt-dlp-")?
+        .strip_suffix(std::env::consts::EXE_SUFFIX)?;
     let (version, digest) = name.split_once('-')?;
     if !valid_digest(digest) {
         return None;

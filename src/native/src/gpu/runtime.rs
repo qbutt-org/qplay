@@ -105,9 +105,13 @@ impl Runtime {
                 Err("A different frame generation runtime is loaded; restart qplay.".into())
             };
         }
+        #[cfg(windows)]
         let library =
             unsafe { libloading::os::windows::Library::load_with_flags(&actual, 0x100 | 0x800) }
                 .map_err(|error| format!("Load VSScript: {error}"))?;
+        #[cfg(target_os = "linux")]
+        let library = unsafe { libloading::Library::new(&actual) }
+            .map_err(|error| format!("Load VSScript: {error}"))?;
         std::mem::forget(library); // VSScript and its Python state live until process exit.
         *loaded = Some(actual);
         Ok(())

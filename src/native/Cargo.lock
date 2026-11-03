@@ -895,6 +895,7 @@ dependencies = [
  "cxx-qt",
  "cxx-qt-build",
  "cxx-qt-lib",
+ "libc",
  "libloading",
  "matroska-demuxer",
  "qbutt-codex",

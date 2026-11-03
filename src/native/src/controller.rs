@@ -85,6 +85,8 @@ pub mod ffi {
     extern "Rust" {
         fn version_json() -> String;
         fn runtime_info_json(library: &str, data: &str, config: &str) -> Result<String>;
+        #[cfg(target_os = "linux")]
+        fn installation_command(action: &str, source: &str) -> Result<String>;
         type StartTask;
         type RetiredSession;
         fn run_start_task(task: Box<StartTask>);
@@ -363,6 +365,15 @@ pub mod ffi {
     }
 
     impl cxx_qt::Threading for PlayerController {}
+}
+
+#[cfg(target_os = "linux")]
+fn installation_command(action: &str, source: &str) -> Result<String, String> {
+    match action {
+        "--install" => crate::linux_install::install_directory(std::path::Path::new(source)),
+        "--uninstall" => crate::linux_install::uninstall(),
+        _ => Err("Unknown installation action.".into()),
+    }
 }
 
 fn version_json() -> String {

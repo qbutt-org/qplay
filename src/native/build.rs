@@ -8,9 +8,14 @@ fn main() {
     let lock: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&lock_path).expect("read upstream-lock.json"))
             .expect("parse upstream-lock.json");
-    let hash = lock["runtime"]["files"]["libmpv-2.dll"]
-        .as_str()
-        .expect("pin libmpv-2.dll");
+    let target = std::env::var("CARGO_CFG_TARGET_OS").expect("target OS");
+    let hash = match target.as_str() {
+        "windows" => &lock["runtime"]["files"]["libmpv-2.dll"],
+        "linux" => &lock["linux"]["runtime"]["files"]["libmpv.so.2"],
+        _ => panic!("Unsupported qplay target: {target}"),
+    }
+    .as_str()
+    .expect("pinned platform libmpv SHA-256");
     let output = PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR"));
     std::fs::write(
         output.join("engine_pin.rs"),

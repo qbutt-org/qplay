@@ -1,21 +1,28 @@
 use std::io::Read;
-use std::os::windows::io::AsRawHandle;
-use std::os::windows::process::CommandExt;
+#[cfg(target_os = "linux")]
+use std::os::unix::process::CommandExt;
+#[cfg(windows)]
+use std::os::windows::{io::AsRawHandle, process::CommandExt};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+#[cfg(windows)]
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
+#[cfg(windows)]
 use windows::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
     SetInformationJobObject,
 };
+#[cfg(windows)]
 use windows::core::PCWSTR;
 
+#[cfg(windows)]
 struct ChildJob(HANDLE);
 
+#[cfg(windows)]
 impl ChildJob {
     fn attach(child: &std::process::Child) -> Result<Self, String> {
         let handle = unsafe { CreateJobObjectW(None, PCWSTR::null()) }
@@ -38,9 +45,28 @@ impl ChildJob {
     }
 }
 
+#[cfg(windows)]
 impl Drop for ChildJob {
     fn drop(&mut self) {
         let _ = unsafe { CloseHandle(self.0) };
+    }
+}
+
+#[cfg(target_os = "linux")]
+struct ChildJob(i32);
+
+#[cfg(target_os = "linux")]
+impl ChildJob {
+    fn attach(child: &std::process::Child) -> Result<Self, String> {
+        Ok(Self(child.id() as i32))
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for ChildJob {
+    fn drop(&mut self) {
+        // SAFETY: The helper starts its own process group; this never signals qplay.
+        unsafe { libc::kill(-self.0, libc::SIGKILL) };
     }
 }
 
@@ -69,11 +95,15 @@ pub fn run_bounded(
     if let Some((name, value)) = environment {
         command.env(name, value);
     }
+    command.stdin(Stdio::null());
+    #[cfg(windows)]
     command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    #[cfg(target_os = "linux")]
+    command.process_group(0);
     let mut child = command
         .spawn()
         .map_err(|error| format!("Start helper process: {error}"))?;
-    let _job = match ChildJob::attach(&child) {
+    let job = match ChildJob::attach(&child) {
         Ok(job) => job,
         Err(error) => {
             let _ = child.kill();
@@ -107,6 +137,7 @@ pub fn run_bounded(
     let started = Instant::now();
     let status = loop {
         if cancel.load(Ordering::Acquire) || started.elapsed() >= timeout {
+            drop(job);
             let _ = child.kill();
             let _ = child.wait();
             let _ = reader.join();
@@ -119,6 +150,7 @@ pub fn run_bounded(
             Ok(Some(status)) => break status,
             Ok(None) => std::thread::sleep(Duration::from_millis(25)),
             Err(error) => {
+                drop(job);
                 let _ = child.kill();
                 let _ = child.wait();
                 let _ = reader.join();
@@ -129,6 +161,7 @@ pub fn run_bounded(
             }
         }
     };
+    drop(job);
     let bytes = reader
         .join()
         .map_err(|_| "Read helper output: reader stopped unexpectedly.")?

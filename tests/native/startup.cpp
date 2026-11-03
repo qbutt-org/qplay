@@ -1,4 +1,5 @@
 #include "startup.h"
+#include "ipc.h"
 
 #include <stdexcept>
 
@@ -26,11 +27,17 @@ QJsonObject exerciseStartup(Qplay::PlayerController &backend, const QString &lib
     const QString &media, const QString &secondMedia, const QString &profile,
     const std::function<void()> &tick)
 {
-    const QString pipe = QStringLiteral("qbutt-mpv-startup-%1").arg(QCoreApplication::applicationPid());
-    const QString extractor = QFileInfo(library).dir().filePath(QStringLiteral("yt-dlp.exe"));
+    const QString pipe = testIpcName(QStringLiteral("qbutt-mpv-startup-%1").arg(QCoreApplication::applicationPid()));
+    const QString extractor = QFileInfo(library).dir().filePath(
+#ifdef Q_OS_WIN
+        QStringLiteral("yt-dlp.exe")
+#else
+        QStringLiteral("yt-dlp")
+#endif
+    );
     require(QFileInfo::exists(extractor), "Pinned extractor fixture is missing");
     require(backend.configureLaunch({
-        QStringLiteral("--input-ipc-server=\\\\.\\pipe\\") + pipe,
+        testIpcOption(pipe),
         QStringLiteral("--script-opts-append=ytdl_hook-ytdl_path=") + extractor
     }).isEmpty(), "Configure startup IPC failed");
     backend.openMedia(media);

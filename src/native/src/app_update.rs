@@ -1,10 +1,11 @@
 use std::fs::{self, File, OpenOptions};
 use std::future::Future;
 use std::io::{Read, Write};
-use std::os::windows::fs::MetadataExt;
+#[cfg(windows)]
 use std::os::windows::io::{FromRawHandle, OwnedHandle};
 
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
@@ -13,18 +14,33 @@ use reqwest::Client;
 use reqwest::StatusCode;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+#[cfg(windows)]
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
 };
 
-use windows::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+#[cfg(windows)]
 use windows::Win32::System::Threading::{
     OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
+#[cfg(windows)]
 use windows::core::PWSTR;
 
 use crate::files::move_new_file;
 use crate::runtime_info::VERSION;
+
+#[cfg(windows)]
+const RELEASE_ASSET: &str = "qplay-setup.exe";
+#[cfg(windows)]
+const PORTABLE_ASSET: &str = "qplay-portable.zip";
+#[cfg(windows)]
+const UPDATE_SUFFIX: &str = "-setup.exe";
+#[cfg(target_os = "linux")]
+const RELEASE_ASSET: &str = "qplay-linux-x64.zip";
+#[cfg(target_os = "linux")]
+const PORTABLE_ASSET: &str = RELEASE_ASSET;
+#[cfg(target_os = "linux")]
+const UPDATE_SUFFIX: &str = "-linux-x64.zip";
 
 const RELEASE_URL: &str = "https://api.github.com/repos/qbutt-org/qplay/releases/latest";
 const DOWNLOAD_PREFIX: &str = "https://github.com/qbutt-org/qplay/releases/download/";
@@ -72,7 +88,7 @@ fn cleanup_updates(directory: &Path) -> Result<(), String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(format!("Inspect update cache: {error}")),
     };
-    if !metadata.is_dir() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 {
+    if !metadata.is_dir() || crate::files::is_link(&metadata) {
         return Err("Invalid update cache directory.".into());
     }
     let current = parse_version(VERSION.trim()).expect("compiled qplay version");
@@ -85,7 +101,7 @@ fn cleanup_updates(directory: &Path) -> Result<(), String> {
         let Some(name) = name.to_str() else { continue };
         let Some((number, identity)) = name
             .strip_prefix("qplay-v")
-            .and_then(|name| name.strip_suffix("-setup.exe"))
+            .and_then(|name| name.strip_suffix(UPDATE_SUFFIX))
             .and_then(|name| name.split_once('-'))
         else {
             continue;
@@ -100,7 +116,7 @@ fn cleanup_updates(directory: &Path) -> Result<(), String> {
         }
         let metadata = fs::symlink_metadata(entry.path())
             .map_err(|error| format!("Inspect cached update: {error}"))?;
-        if !metadata.is_file() || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0 {
+        if !metadata.is_file() || crate::files::is_link(&metadata) {
             continue;
         }
         match fs::remove_file(entry.path()) {
@@ -113,7 +129,7 @@ fn cleanup_updates(directory: &Path) -> Result<(), String> {
 }
 
 pub fn check(cancel: &AtomicBool, data: &Path) -> Result<Option<CheckResult>, String> {
-    cleanup_updates(&data.join("updates"))?;
+    cleanup_updates(&crate::platform::cache_directory(data).join("updates"))?;
     run_network(cancel, async {
         let client = client(Duration::from_secs(30))?;
         let mut response = client
@@ -150,8 +166,8 @@ pub fn check(cancel: &AtomicBool, data: &Path) -> Result<Option<CheckResult>, St
             return Ok(CheckResult::Current);
         }
 
-        let setup = select_asset(&release, "qplay-setup.exe")?;
-        let portable = select_asset(&release, "qplay-portable.zip")?;
+        let setup = select_asset(&release, RELEASE_ASSET)?;
+        let portable = select_asset(&release, PORTABLE_ASSET)?;
         Ok(CheckResult::Available(Release {
             version: release.tag_name[1..].into(),
             setup,
@@ -164,13 +180,13 @@ fn select_asset(release: &GithubRelease, name: &str) -> Result<VerifiedAsset, St
     let mut matches = release.assets.iter().filter(|asset| asset.name == name);
     let asset = matches
         .next()
-        .ok_or("qplay release is missing its Windows assets.")?;
+        .ok_or("qplay release is missing its platform assets.")?;
     if matches.next().is_some()
         || asset.browser_download_url != format!("{}{}/{}", DOWNLOAD_PREFIX, release.tag_name, name)
         || asset.size == 0
         || asset.size > MAX_INSTALLER_SIZE
     {
-        return Err("qplay release has invalid Windows asset metadata.".into());
+        return Err("qplay release has invalid platform asset metadata.".into());
     }
     let sha256 = asset
         .digest
@@ -194,17 +210,20 @@ pub fn download(
         return Ok(None);
     }
     let digest = release.setup.sha256.as_str();
-    let directory = data.join("updates");
+    let directory = crate::platform::cache_directory(data).join("updates");
     fs::create_dir_all(&directory)
         .map_err(|error| format!("Create qplay update directory: {error}"))?;
-    let cached = directory.join(format!("qplay-v{}-{digest}-setup.exe", release.version));
+    let cached = directory.join(format!(
+        "qplay-v{}-{digest}{UPDATE_SUFFIX}",
+        release.version
+    ));
     if verified_file(&cached, release.setup.size, digest)? {
         return Ok(Some(cached));
     }
     let attempt = NEXT_STAGE.fetch_add(1, Ordering::Relaxed);
     let target = if fs::symlink_metadata(&cached).is_ok() {
         directory.join(format!(
-            "qplay-v{}-{digest}-{}-{attempt}-setup.exe",
+            "qplay-v{}-{digest}-{}-{attempt}{UPDATE_SUFFIX}",
             release.version,
             std::process::id()
         ))
@@ -271,6 +290,7 @@ pub fn download(
     result
 }
 
+#[cfg(windows)]
 fn other_instances_running(install_directory: &Path) -> Result<bool, String> {
     let expected = fs::canonicalize(install_directory.join("qplay.exe"))
         .map_err(|error| format!("Inspect installed qplay: {error}"))?;
@@ -326,6 +346,7 @@ fn other_instances_running(install_directory: &Path) -> Result<bool, String> {
     Ok(false)
 }
 
+#[cfg(windows)]
 pub fn start_installer(
     release: &Release,
     path: &Path,
@@ -361,10 +382,7 @@ fn verified_file(path: &Path, size: u64, digest: &str) -> Result<bool, String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(error) => return Err(format!("Inspect qplay update: {error}")),
     };
-    if !metadata.is_file()
-        || metadata.len() != size
-        || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0
-    {
+    if !metadata.is_file() || metadata.len() != size || crate::files::is_link(&metadata) {
         return Ok(false);
     }
     let mut file = File::open(path).map_err(|error| format!("Read qplay update: {error}"))?;
@@ -438,4 +456,16 @@ fn valid_digest(value: &str) -> Option<&str> {
             .bytes()
             .all(|value| value.is_ascii_hexdigit() && !value.is_ascii_uppercase()))
     .then_some(digest)
+}
+
+#[cfg(target_os = "linux")]
+pub fn start_installer(
+    release: &Release,
+    path: &Path,
+    install_directory: &Path,
+) -> Result<(), String> {
+    if !verified_file(path, release.setup.size, &release.setup.sha256)? {
+        return Err("The staged qplay update failed integrity verification.".into());
+    }
+    crate::linux_install::install_archive(path, install_directory, &release.version)
 }

@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { copyFile, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { delimiter, join, relative, resolve } from "node:path";
 
 const [buildDirectory, runtimeDirectory, mediaFile, qtDirectory, evidenceDirectory] = Bun.argv.slice(2);
 
@@ -17,8 +17,9 @@ if (!outputFromRepository.startsWith("..") && !outputFromRepository.includes(":"
     throw new Error("Keep generated acceptance evidence outside the source checkout.");
 }
 
-const executable = resolve(buildDirectory, "qplay-native-acceptance.exe");
-const library = resolve(runtimeDirectory, "engine/libmpv-2.dll");
+const windows = process.platform === "win32";
+const executable = resolve(buildDirectory, `qplay-native-acceptance${windows ? ".exe" : ""}`);
+const library = resolve(runtimeDirectory, windows ? "engine/libmpv-2.dll" : "engine/libmpv.so.2");
 const profile = join(output, `профиль-${randomUUID()}`);
 const evidencePrefix = join(output, "player");
 
@@ -31,7 +32,7 @@ const child = spawn(executable, argumentsList, {
     stdio: ["ignore", "pipe", "pipe"],
     env: {
         ...process.env,
-        PATH: `${resolve(qtDirectory, "bin")};${process.env.PATH ?? ""}`,
+        PATH: `${resolve(qtDirectory, "bin")}${delimiter}${process.env.PATH ?? ""}`,
         QT_PLUGIN_PATH: resolve(qtDirectory, "plugins"),
         QML_IMPORT_PATH: resolve(qtDirectory, "qml"),
         QT_COMMAND_LINE_PARSER_NO_GUI_MESSAGE_BOXES: "1",

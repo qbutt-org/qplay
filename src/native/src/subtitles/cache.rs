@@ -108,7 +108,7 @@ impl SubtitleCache {
             return Err(SubtitleCacheError::Invalid);
         }
         Ok(Self {
-            root: data_dir.join("subtitle-cache/v1"),
+            root: crate::platform::cache_directory(data_dir).join("subtitle-cache/v1"),
         })
     }
 

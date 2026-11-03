@@ -45,9 +45,9 @@ pub fn runtime_info_json(library: &str, data: &str, config: &str) -> Result<Stri
         .select()?
         .ok_or("The bundled yt-dlp executable is missing or invalid.")?;
 
-    let mpv = tool(engine, "mpv.exe")?;
-    let ffmpeg = tool(engine, "ffmpeg.exe")?;
-    let ffprobe = tool(engine, "ffprobe.exe")?;
+    let mpv = tool(engine, &crate::platform::executable("mpv"))?;
+    let ffmpeg = tool(engine, &crate::platform::executable("ffmpeg"))?;
+    let ffprobe = tool(engine, &crate::platform::executable("ffprobe"))?;
     let deno = tools.deno_path()?;
     let metadata = json!({
         "product": "qplay",
@@ -56,6 +56,7 @@ pub fn runtime_info_json(library: &str, data: &str, config: &str) -> Result<Stri
         "runtimeDir": engine,
         "configDir": config,
         "dataDir": data,
+        "cacheDir": crate::platform::cache_directory(data),
         "tools": {
             "mpv": mpv,
             "ffmpeg": ffmpeg,
@@ -71,21 +72,37 @@ pub fn runtime_info_json(library: &str, data: &str, config: &str) -> Result<Stri
 }
 
 pub(crate) fn verify_bundle(bundle: &Path) -> Result<(), String> {
+    verify_bundle_version(bundle, VERSION.trim())
+}
+
+pub(crate) fn verify_bundle_version(bundle: &Path, version: &str) -> Result<(), String> {
     let bytes = fs::read(bundle.join("build-manifest.json"))
         .map_err(|error| format!("Read qplay build manifest: {error}"))?;
     let manifest: BuildManifest = serde_json::from_slice(&bytes)
         .map_err(|error| format!("Parse qplay build manifest: {error}"))?;
-    if manifest.product != "qplay" || manifest.version != VERSION.trim() {
+    if manifest.product != "qplay" || manifest.version != version {
         return Err("The qplay build manifest does not match this player.".into());
     }
-    for required in [
+    #[cfg(windows)]
+    let required_files = [
         "qplay.exe",
         "engine/libmpv-2.dll",
         "engine/mpv.exe",
         "engine/ffmpeg.exe",
         "engine/ffprobe.exe",
         "engine/yt-dlp.exe",
-    ] {
+    ];
+    #[cfg(target_os = "linux")]
+    let required_files = [
+        "qplay",
+        "engine/libmpv.so.2",
+        "engine/mpv",
+        "engine/ffmpeg",
+        "engine/ffprobe",
+        "engine/yt-dlp",
+        "engine/deno",
+    ];
+    for required in required_files {
         if !manifest.files.contains_key(required) {
             return Err(format!("The qplay build manifest omits {required}."));
         }

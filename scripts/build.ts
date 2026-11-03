@@ -5,6 +5,11 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 
+if (process.platform === "linux") {
+    await import("./build-linux");
+    process.exit(0);
+}
+
 const root = resolve(import.meta.dir, "..");
 const { values } = parseArgs({ options: {
     output: { type: "string", default: join(tmpdir(), "qplay-build") },

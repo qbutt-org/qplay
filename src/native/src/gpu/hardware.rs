@@ -1,3 +1,4 @@
+#[cfg(windows)]
 use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, DXGI_ERROR_NOT_FOUND, IDXGIFactory1};
 
 use super::shaders::ShaderQuality;
@@ -132,6 +133,7 @@ fn tier_from_memory(vram_mib: u64) -> HardwareTier {
     }
 }
 
+#[cfg(windows)]
 pub fn detect() -> Result<HardwareProfile, String> {
     let factory: IDXGIFactory1 = unsafe { CreateDXGIFactory1() }
         .map_err(|error| format!("Inspect display adapters: {error}"))?;
@@ -161,4 +163,37 @@ pub fn detect() -> Result<HardwareProfile, String> {
         .into_iter()
         .max_by_key(|candidate| candidate.tier)
         .ok_or("DXGI reported no display adapters.".into())
+}
+
+#[cfg(target_os = "linux")]
+pub fn detect() -> Result<HardwareProfile, String> {
+    let adapters = std::fs::read_dir("/sys/class/drm")
+        .map_err(|error| format!("Inspect display adapters: {error}"))?;
+    let mut candidates = Vec::new();
+    for adapter in adapters {
+        let adapter = adapter.map_err(|error| format!("Read display adapter: {error}"))?;
+        let name = adapter.file_name();
+        let Some(index) = name.to_str().and_then(|name| name.strip_prefix("card")) else {
+            continue;
+        };
+        if index.is_empty() || !index.bytes().all(|byte| byte.is_ascii_digit()) {
+            continue;
+        }
+        let device = adapter.path().join("device");
+        let Ok(vendor) = std::fs::read_to_string(device.join("vendor")) else {
+            continue;
+        };
+        let vendor = u32::from_str_radix(vendor.trim().trim_start_matches("0x"), 16)
+            .map_err(|error| format!("Read display adapter vendor: {error}"))?;
+        let memory = std::fs::read_to_string(device.join("mem_info_vram_total"))
+            .ok()
+            .and_then(|value| value.trim().parse().ok())
+            .unwrap_or(0);
+        let name = std::fs::read_to_string(device.join("product_name")).unwrap_or_default();
+        candidates.push(profile(&name, vendor, memory, false));
+    }
+    candidates
+        .into_iter()
+        .max_by_key(|candidate| candidate.tier)
+        .ok_or("No DRM display adapter was reported.".into())
 }

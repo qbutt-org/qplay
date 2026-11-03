@@ -3,7 +3,7 @@
 use std::ffi::{CStr, CString, c_char, c_double, c_int, c_ulong, c_void};
 use std::path::Path;
 
-use libloading::os::windows::Library;
+use libloading::Library;
 use sha2::{Digest, Sha256};
 
 include!(concat!(env!("OUT_DIR"), "/engine_pin.rs"));
@@ -141,13 +141,22 @@ impl Api {
         let path = path
             .canonicalize()
             .map_err(|error| format!("Locate mpv library: {error}"))?;
-        // SAFETY: The validated absolute DLL and its dependencies use the DLL directory and
-        // Windows' trusted default directories, never the current directory or caller PATH.
-        let library =
-            unsafe { Library::load_with_flags(&path, 0x100 | 0x1000) }.map_err(|error| {
-                let system_error = std::io::Error::last_os_error();
-                format!("Load mpv library: {error} ({system_error})")
-            })?;
+        #[cfg(windows)]
+        // SAFETY: Use the verified DLL's directory and trusted Windows directories.
+        let library: Library =
+            unsafe { libloading::os::windows::Library::load_with_flags(&path, 0x100 | 0x1000) }
+                .map(Into::into)
+                .map_err(|error| format!("Load mpv library: {error}"))?;
+        #[cfg(target_os = "linux")]
+        // SAFETY: Load the verified absolute library with its bundled ELF dependency closure.
+        let library: Library = unsafe {
+            libloading::os::unix::Library::open(
+                Some(&path),
+                libloading::os::unix::RTLD_NOW | libloading::os::unix::RTLD_LOCAL,
+            )
+        }
+        .map(Into::into)
+        .map_err(|error| format!("Load mpv library: {error}"))?;
         macro_rules! symbol {
             ($name:literal) => {
                 // SAFETY: These signatures match the pinned client/render API headers.

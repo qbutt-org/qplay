@@ -27,21 +27,26 @@
 
 int main(int argc, char *argv[])
 {
-    bool metadataQuery = false;
+    bool headless = false;
     for (int i = 1; i < argc; ++i)
     {
         if (std::strcmp(argv[i], "--") == 0)
             break;
         if ((std::strcmp(argv[i], "--version-json") == 0)
-            || (std::strcmp(argv[i], "--runtime-info-json") == 0))
+            || (std::strcmp(argv[i], "--runtime-info-json") == 0)
+#ifdef Q_OS_LINUX
+            || (std::strcmp(argv[i], "--install") == 0)
+            || (std::strcmp(argv[i], "--uninstall") == 0)
+#endif
+            )
         {
-            metadataQuery = true;
+            headless = true;
             break;
         }
     }
 
     std::unique_ptr<QCoreApplication> app;
-    if (metadataQuery)
+    if (headless)
         app = std::make_unique<QCoreApplication>(argc, argv);
     else
     {
@@ -50,6 +55,29 @@ int main(int argc, char *argv[])
         app = std::make_unique<QGuiApplication>(argc, argv);
         QGuiApplication::setWindowIcon(QIcon(QStringLiteral(":/assets/qplay.ico")));
     }
+
+#ifdef Q_OS_LINUX
+    if (app->arguments().size() == 2
+        && (app->arguments().at(1) == QStringLiteral("--install")
+            || app->arguments().at(1) == QStringLiteral("--uninstall")))
+    {
+        try
+        {
+            const QByteArray action = app->arguments().at(1).toUtf8();
+            const QByteArray source = QCoreApplication::applicationDirPath().toUtf8();
+            const rust::String result = Qplay::installation_command(
+                rust::Str(action.constData(), action.size()), rust::Str(source.constData(), source.size()));
+            std::fwrite(result.data(), 1, result.size(), stdout);
+            std::fputc('\n', stdout);
+            return 0;
+        }
+        catch (const std::exception &error)
+        {
+            std::fprintf(stderr, "%s\n", error.what());
+            return 1;
+        }
+    }
+#endif
 
     QString media;
     QString profile;
@@ -87,9 +115,14 @@ int main(int argc, char *argv[])
     }
     app->setApplicationName(QStringLiteral("qplay"));
     const QString installDirectory = QCoreApplication::applicationDirPath();
+#ifdef Q_OS_WIN
     const QString library = installDirectory + QStringLiteral("/engine/libmpv-2.dll");
+#else
+    const QString library = installDirectory + QStringLiteral("/engine/libmpv.so.2");
+#endif
     const bool portable = QFileInfo::exists(installDirectory + QStringLiteral("/qplay.portable"));
     QString configuration;
+    QString cache;
     if (profile.isEmpty())
     {
         configuration = portable
@@ -98,11 +131,17 @@ int main(int argc, char *argv[])
         profile = portable
             ? installDirectory + QStringLiteral("/userdata/data")
             : QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+#ifdef Q_OS_LINUX
+        cache = portable ? profile : QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+#else
+        cache = profile;
+#endif
     }
     else
     {
         configuration = QDir(profile).absoluteFilePath(QStringLiteral("config"));
         profile = QDir(profile).absoluteFilePath(QStringLiteral("data"));
+        cache = profile;
     }
 
     if (versionJson || runtimeInfoJson)
@@ -133,7 +172,7 @@ int main(int argc, char *argv[])
         }
     }
 
-    qputenv("QPLAY_MEDIA_RUNTIME", QDir(profile).absoluteFilePath(QStringLiteral("framegen")).toUtf8());
+    qputenv("QPLAY_MEDIA_RUNTIME", QDir(cache).absoluteFilePath(QStringLiteral("framegen")).toUtf8());
 
     int result;
     {

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 
 const [build, runtime, mediaPath, qt, evidenceDirectory] = Bun.argv.slice(2).map(value => resolve(value));
 assert(build && runtime && mediaPath && qt && evidenceDirectory,
@@ -30,16 +30,16 @@ const server = Bun.serve({
         return new Response(media.slice(start, end + 1), { status: match ? 206 : 200, headers });
     },
 });
-const executable = join(build, "qplay-native-acceptance.exe");
+const executable = join(build, `qplay-native-acceptance${process.platform === "win32" ? ".exe" : ""}`);
 const prefix = join(evidenceDirectory, "downloads");
 const profile = join(evidenceDirectory, "profile");
 await mkdir(profile, { recursive: true });
-const command = [join(runtime, "engine/libmpv-2.dll"), `http://127.0.0.1:${server.port}/legal.mp4`, mediaPath, profile, prefix];
+const command = [join(runtime, process.platform === "win32" ? "engine/libmpv-2.dll" : "engine/libmpv.so.2"), `http://127.0.0.1:${server.port}/legal.mp4`, mediaPath, profile, prefix];
 let log = "";
 let timedOut = false;
 try {
     const child = spawn(executable, command, { windowsHide: true,
-        env: { ...process.env, PATH: `${join(qt, "bin")};${process.env.PATH ?? ""}`,
+        env: { ...process.env, PATH: `${join(qt, "bin")}${delimiter}${process.env.PATH ?? ""}`,
             QT_PLUGIN_PATH: join(qt, "plugins"), QML_IMPORT_PATH: join(qt, "qml"),
             QT_COMMAND_LINE_PARSER_NO_GUI_MESSAGE_BOXES: "1", QPLAY_DOWNLOAD_QA: "1" },
         stdio: ["ignore", "pipe", "pipe"],

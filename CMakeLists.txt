@@ -8,6 +8,11 @@ project(qplay_native
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(CMAKE_INSTALL_BINDIR .)
+    set(CMAKE_INSTALL_LIBDIR lib)
+endif()
+
 find_package(Qt6 6.12 REQUIRED COMPONENTS Quick QuickControls2 QuickDialogs2 OpenGL Network)
 qt_standard_project_setup(REQUIRES 6.12)
 
@@ -89,7 +94,7 @@ qt_add_resources(qplay-native "app_icon"
     FILES assets/qplay.ico
 )
 target_link_libraries(qplay-native
-    PRIVATE qplay_views qplay_viewsplugin qplay_native qplay_player_plugin Qt::QuickDialogs2 bcrypt
+    PRIVATE qplay_views qplay_viewsplugin qplay_native qplay_player_plugin Qt::QuickDialogs2
 )
 
 qt_add_executable(qplay-native-acceptance WIN32
@@ -100,5 +105,20 @@ qt_add_executable(qplay-native-acceptance WIN32
     tests/native/startup.h
 )
 target_link_libraries(qplay-native-acceptance
-    PRIVATE qplay_views qplay_viewsplugin qplay_native qplay_player_plugin Qt::Network bcrypt
+    PRIVATE qplay_views qplay_viewsplugin qplay_native qplay_player_plugin Qt::Network
 )
+
+if(WIN32)
+    target_link_libraries(qplay-native PRIVATE bcrypt)
+    target_link_libraries(qplay-native-acceptance PRIVATE bcrypt)
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set_target_properties(qplay-native PROPERTIES OUTPUT_NAME qplay INSTALL_RPATH "$ORIGIN/lib")
+    install(TARGETS qplay-native RUNTIME DESTINATION .)
+    qt_generate_deploy_qml_app_script(
+        TARGET qplay-native
+        OUTPUT_SCRIPT qplay_deploy_script
+    )
+    install(SCRIPT ${qplay_deploy_script})
+endif()

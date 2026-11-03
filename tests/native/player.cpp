@@ -1,5 +1,7 @@
+#ifdef _WIN32
 #include <Windows.h>
 #include <TlHelp32.h>
+#endif
 
 #include <cmath>
 #include <cstdio>
@@ -30,11 +32,13 @@
 #include <QQuickStyle>
 #include <QQuickWindow>
 #include <QStringList>
+#include <QSet>
 #include <QThread>
 #include <QThreadPool>
 #include <QUrl>
 
 #include "downloads.h"
+#include "ipc.h"
 #include "startup.h"
 
 #include "qplay_native/src/controller.cxxqt.h"
@@ -50,6 +54,7 @@ void require(bool condition, const char *message)
 
 int childProcessCount(bool report = true)
 {
+#ifdef Q_OS_WIN
     const auto snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     require(snapshot != INVALID_HANDLE_VALUE, "Process snapshot failed");
     int count = 0;
@@ -69,6 +74,23 @@ int childProcessCount(bool report = true)
     }
     CloseHandle(snapshot);
     return count;
+#else
+    QSet<QByteArray> processes;
+    const QDir tasks(QStringLiteral("/proc/self/task"));
+    for (const QString &task : tasks.entryList(QDir::Dirs | QDir::NoDotAndDotDot))
+    {
+        QFile children(tasks.filePath(task + QStringLiteral("/children")));
+        if (!children.open(QIODevice::ReadOnly))
+            continue; // A worker can finish while /proc is enumerated.
+        for (const QByteArray &process : children.readAll().simplified().split(' '))
+            if (!process.isEmpty())
+                processes.insert(process);
+    }
+    if (report)
+        for (const QByteArray &process : processes)
+            std::fprintf(stderr, "Owned child: %s\n", process.constData());
+    return processes.size();
+#endif
 }
 
 qint64 selectedSubtitle(Qplay::TrackModel *model)
@@ -174,7 +196,7 @@ int main(int argc, char *argv[])
     const bool embeddedNetworkQa = !embeddedFormat.isEmpty();
     const bool torrentSubtitleBudgetQa = qEnvironmentVariableIsSet("QPLAY_TORRENT_SUBTITLE_BUDGET_QA");
     const bool downloadQa = qEnvironmentVariableIsSet("QPLAY_DOWNLOAD_QA");
-    const QString downloadPipe = QStringLiteral("qbutt-mpv-save-%1").arg(GetCurrentProcessId());
+    const QString downloadPipe = testIpcName(QStringLiteral("qbutt-mpv-save-%1").arg(QCoreApplication::applicationPid()));
 
     try
     {
@@ -247,7 +269,7 @@ int main(int argc, char *argv[])
             if (downloadQa)
             {
                 require(backend.configureLaunch({QStringLiteral("--external-downloads"),
-                    QStringLiteral("--input-ipc-server=\\\\.\\pipe\\") + downloadPipe}).isEmpty(),
+                    testIpcOption(downloadPipe)}).isEmpty(),
                     "Configure download IPC fixture failed");
             }
             QFile savedPreferences(preferences);

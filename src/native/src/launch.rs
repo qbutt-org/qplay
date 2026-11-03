@@ -39,7 +39,28 @@ impl LaunchOptions {
 
             match name {
                 "input-ipc-server" => {
-                    if !value.starts_with(r"\\.\pipe\qbutt-mpv-") || value.len() > 256 {
+                    #[cfg(windows)]
+                    let valid = value.starts_with(r"\\.\pipe\qbutt-mpv-") && value.len() <= 256;
+                    #[cfg(target_os = "linux")]
+                    let valid = {
+                        use std::os::unix::fs::MetadataExt;
+                        let path = Path::new(value);
+                        let parent = path
+                            .parent()
+                            .and_then(|parent| std::fs::metadata(parent).ok());
+                        path.is_absolute()
+                            && value.len() < 108
+                            && path
+                                .file_name()
+                                .and_then(|name| name.to_str())
+                                .is_some_and(|name| name.starts_with("qbutt-mpv-"))
+                            && parent.is_some_and(|metadata| {
+                                metadata.is_dir()
+                                    && metadata.uid() == unsafe { libc::geteuid() }
+                                    && metadata.mode() & 0o077 == 0
+                            })
+                    };
+                    if !valid {
                         return Err("Invalid player IPC path.".into());
                     }
                     launch.ipc_path = Some(value.into());
