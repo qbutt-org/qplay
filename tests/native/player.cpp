@@ -848,6 +848,28 @@ int main(int argc, char *argv[])
             tick();
             require(target.toImage().save(evidencePrefix + QStringLiteral(".fx.png")),
                 "Save actual FX controls failed");
+#ifdef Q_OS_LINUX
+            require(!backend.framegenSupported(), "Linux reported frame generation support");
+            const QString previousFramegen = backend.framegenChoice();
+            backend.changeFramegen(QStringLiteral("on"));
+            require(backend.framegenChoice() == previousFramegen,
+                "Unsupported frame generation changed its saved choice");
+            auto *framegenOn = findVisualItem(popupContent, QStringLiteral("framegenOptionon"));
+            auto *framegenAvailability = findVisualItem(popupContent, QStringLiteral("framegenAvailability"));
+            require(framegenOn && !framegenOn->isEnabled() && framegenAvailability
+                && framegenAvailability->property("text").toString() == QStringLiteral("Unavailable on Linux"),
+                "Linux frame generation controls are enabled or lack their availability message");
+            click(window, *framegenOn);
+            require(backend.framegenChoice() == previousFramegen,
+                "Disabled frame generation control accepted pointer input");
+            require(root->setProperty("russian", true), "Switch FX to Russian failed");
+            wait([&] { return framegenAvailability->property("text").toString() == QStringLiteral("Недоступно в Linux"); },
+                "Russian frame generation availability message did not appear");
+            tick();
+            require(target.toImage().save(evidencePrefix + QStringLiteral(".fx-linux-ru.png")),
+                "Save Russian Linux FX controls failed");
+            root->setProperty("russian", false);
+#endif
 
             require(QMetaObject::invokeMethod(playbackMenu, "close"), "Close playback menu failed");
             wait([&] { return !playbackMenu->property("opened").toBool(); },
@@ -1065,6 +1087,7 @@ int main(int argc, char *argv[])
                 {QStringLiteral("effectiveShader"), backend.effectiveShader()},
                 {QStringLiteral("anime4kChangedRenderedFrame"), true},
                 {QStringLiteral("framegenChoice"), backend.framegenChoice()},
+                {QStringLiteral("framegenSupported"), backend.framegenSupported()},
                 {QStringLiteral("pauseSeekResume"), true},
                 {QStringLiteral("playbackMenuOpened"), playbackMenuOpened},
                 {QStringLiteral("speedSubmenuOpened"), speedSubmenuOpened},

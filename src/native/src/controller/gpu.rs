@@ -217,7 +217,8 @@ fn probe(input: ProbeInput, cancel: &AtomicBool, on_prepare: impl FnOnce()) -> P
     };
     let timing = timing_result.as_ref().ok().copied();
     let hardware = hardware::detect().ok();
-    let wants_framegen = !matches!(input.shader_choice,
+    let wants_framegen = crate::gpu::runtime::SUPPORTED
+        && !matches!(input.shader_choice,
         ShaderChoice::Manual(preset) if preset != ShaderPreset::Fsr)
         && match input.framegen_choice {
             FramegenChoice::Off => false,
@@ -546,10 +547,16 @@ impl ffi::PlayerController {
         else {
             return;
         };
-        match choice.mpv_value(quality, &shader_dir) {
-            Ok(value) => {
-                self.as_mut().dispatch_gpu(
-                    &["set", "glsl-shaders", &value],
+        let result = choice.paths(quality, &shader_dir).and_then(|paths| {
+            self.session
+                .as_ref()
+                .ok_or("The video session is unavailable.")?
+                .set_string_array("glsl-shaders", &paths)
+        });
+        match result {
+            Ok(id) => {
+                self.as_mut().rust_mut().gpu_commands.insert(
+                    id,
                     GpuCommand::Shader {
                         preset: choice,
                         generation,
@@ -840,6 +847,9 @@ impl ffi::PlayerController {
     }
 
     pub(super) fn change_framegen(mut self: Pin<&mut Self>, choice: &QString) {
+        if !self.framegen_supported() {
+            return;
+        }
         let Some(choice) = FramegenChoice::from_id(&choice.to_string()) else {
             return;
         };

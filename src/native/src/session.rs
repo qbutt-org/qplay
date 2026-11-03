@@ -278,6 +278,14 @@ impl Session {
         Ok(id)
     }
 
+    pub fn set_string_array(&self, name: &str, entries: &[String]) -> Result<u64, String> {
+        let id = self.next_command.fetch_add(1, Ordering::Relaxed);
+        let raw = self.raw();
+        raw.api
+            .set_string_array_async(raw.handle, id, name, entries)?;
+        Ok(id)
+    }
+
     pub fn audio_delay(&self) -> Result<f64, String> {
         let raw = self.raw();
         let mut value = 0.0;
@@ -370,7 +378,9 @@ impl Session {
                 let reason = extractor_reason(unsafe { CStr::from_ptr(data.text) }.to_bytes());
                 Some(Event::ExtractorError(reason))
             }
-            mpv::EVENT_COMMAND_REPLY => Some(Event::Command(event.userdata, event.error)),
+            mpv::EVENT_COMMAND_REPLY | mpv::EVENT_SET_PROPERTY_REPLY => {
+                Some(Event::Command(event.userdata, event.error))
+            }
             mpv::EVENT_START_FILE => Some(Event::StartFile),
             mpv::EVENT_END_FILE => {
                 // SAFETY: END_FILE data has the pinned mpv_event_end_file layout.

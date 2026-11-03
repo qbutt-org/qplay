@@ -39,7 +39,7 @@ const portable = join(bundle, "qplay");
 const installed = join(data, "qplay/app/qplay");
 const log: string[] = [];
 
-async function run(program: string, argumentsList: string[], accepted = 0): Promise<string> {
+async function run(program: string, argumentsList: string[], accepted = 0, expectedError?: string): Promise<string> {
     const child = Bun.spawn([program, ...argumentsList], {
         cwd: "/", env: environment, stdout: "pipe", stderr: "pipe",
     });
@@ -49,6 +49,8 @@ async function run(program: string, argumentsList: string[], accepted = 0): Prom
     ]).finally(() => clearTimeout(timeout));
     log.push(JSON.stringify({ program, argumentsList, status, output, error }));
     assert.equal(status, accepted, `${program}: ${error}`);
+    if (expectedError)
+        assert(error.includes(expectedError), `${program}: expected ${expectedError}, got ${error}`);
     return output.trim();
 }
 
@@ -173,8 +175,8 @@ try {
     await command(["set_property", "pause", false]);
     await Bun.sleep(500);
     assert(Number(await command(["get_property", "time-pos"])) > 4);
-    await run(portable, ["--install"], 1);
-    await run(installed, [`--install-from=${archive}`], 1);
+    await run(portable, ["--install"], 1, "Another qplay window");
+    await run(installed, [`--install-from=${archive}`], 1, "Another qplay window");
     await command(["quit"]);
     assert.equal(await exited, 0);
     await writeFile(join(evidence, "playback.json"), `${JSON.stringify({ duration, width, height, outputWidth, outputHeight, pixelAspectRatio, pauseSeekResume: true, concurrentInstallRefused: true }, null, 4)}\n`);
@@ -195,15 +197,30 @@ assert(!await Bun.file(join(data, "qplay/app/qplay.portable")).exists());
 const malformed = join(evidence, "invalid.zip");
 await writeFile(malformed, "Generated invalid ZIP fixture.\n");
 const beforeFailure = await stat(installed);
-await run(installed, [`--install-from=${malformed}`], 1);
+await run(installed, [`--install-from=${malformed}`], 1, "Read qplay update");
 assert.equal((await stat(installed)).ino, beforeFailure.ino, "A failed archive update changed the installed application.");
 await rm(malformed);
+const unsafeDirectory = join(evidence, "unsafe-archive");
+const unsafeArchive = join(evidence, "unsafe.zip");
+await mkdir(unsafeDirectory);
+await writeFile(join(evidence, "escape.fixture"), "Generated unsafe ZIP member.\n");
+await writeFile(join(unsafeDirectory, "build-manifest.json"), JSON.stringify({
+    product: "qplay", version: version.version, protocolVersion: 1, files: {},
+}));
+const zip = Bun.spawn(["/usr/bin/zip", "-q", unsafeArchive, "../escape.fixture", "build-manifest.json"], { cwd: unsafeDirectory });
+assert.equal(await zip.exited, 0);
+await run(installed, [`--install-from=${unsafeArchive}`], 1, "unsafe path");
+assert.equal((await stat(installed)).ino, beforeFailure.ino);
+assert(!await Bun.file(join(data, "qplay/escape.fixture")).exists());
+await rm(unsafeArchive);
+await rm(join(evidence, "escape.fixture"));
+await rm(unsafeDirectory, { recursive: true });
 const afterUpdate = JSON.parse(await run(installed, ["--runtime-info-json"]));
 assert.equal(afterUpdate.version, version.version);
 
 const unowned = join(data, "qplay/app/preserved-unowned.fixture");
 await writeFile(unowned, "Unrelated files may not be deleted.\n");
-await run(installed, ["--uninstall"], 1);
+await run(installed, ["--uninstall"], 1, "unowned file");
 assert(await Bun.file(unowned).exists());
 await rm(unowned);
 await run(installed, ["--uninstall"]);
@@ -216,6 +233,7 @@ const receipt = {
     portableSha256: await sha256(portable), mediaSha256: await sha256(media),
     installRepeatUninstall: true, dataPreserved: true, unownedFilesPreserved: true,
     archiveUpdate: true, malformedUpdatePreservedInstallation: true,
+    unsafeArchivePreservedInstallation: true,
     toolsWorkedWithoutSdkOrCallerPath: true,
 };
 await writeFile(join(evidence, "commands.jsonl"), `${log.join("\n")}\n`);

@@ -10,6 +10,8 @@ use serde_json::Value;
 use super::framegen::Backend;
 use super::process::run_bounded;
 
+pub const SUPPORTED: bool = cfg!(windows);
+
 const MAX_STATUS_BYTES: u64 = 1024 * 1024;
 const MAX_MANIFEST_BYTES: u64 = 4 * 1024 * 1024;
 static LOADED_VSSCRIPT: Mutex<Option<PathBuf>> = Mutex::new(None);

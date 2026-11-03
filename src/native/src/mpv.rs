@@ -37,6 +37,7 @@ struct NodeList {
 pub const EVENT_NONE: c_int = 0;
 pub const EVENT_SHUTDOWN: c_int = 1;
 pub const EVENT_LOG_MESSAGE: c_int = 2;
+pub const EVENT_SET_PROPERTY_REPLY: c_int = 4;
 pub const EVENT_COMMAND_REPLY: c_int = 5;
 pub const EVENT_START_FILE: c_int = 6;
 pub const EVENT_END_FILE: c_int = 7;
@@ -117,6 +118,8 @@ pub struct Api {
     pub terminate: unsafe extern "C" fn(Handle),
     pub option: unsafe extern "C" fn(Handle, *const c_char, *const c_char) -> c_int,
     option_node: unsafe extern "C" fn(Handle, *const c_char, c_int, *mut c_void) -> c_int,
+    set_property_async:
+        unsafe extern "C" fn(Handle, u64, *const c_char, c_int, *mut c_void) -> c_int,
     pub get_property: unsafe extern "C" fn(Handle, *const c_char, c_int, *mut c_void) -> c_int,
     pub free: unsafe extern "C" fn(*mut c_void),
     free_node: unsafe extern "C" fn(*mut Node),
@@ -177,6 +180,7 @@ impl Api {
             terminate: symbol!("mpv_terminate_destroy"),
             option: symbol!("mpv_set_option_string"),
             option_node: symbol!("mpv_set_option"),
+            set_property_async: symbol!("mpv_set_property_async"),
             get_property: symbol!("mpv_get_property"),
             free: symbol!("mpv_free"),
             free_node: symbol!("mpv_free_node_contents"),
@@ -312,6 +316,32 @@ impl Api {
         name: &str,
         entries: &[String],
     ) -> Result<(), String> {
+        self.with_string_array(name, entries, |name, node| {
+            // SAFETY: mpv_set_option copies the node array synchronously.
+            unsafe { (self.option_node)(handle, name, FORMAT_NODE, node) }
+        })
+    }
+
+    pub fn set_string_array_async(
+        &self,
+        handle: Handle,
+        request: u64,
+        name: &str,
+        entries: &[String],
+    ) -> Result<(), String> {
+        self.with_string_array(name, entries, |name, node| {
+            // SAFETY: mpv copies the value before returning and reports completion
+            // through SET_PROPERTY_REPLY with this request's userdata.
+            unsafe { (self.set_property_async)(handle, request, name, FORMAT_NODE, node) }
+        })
+    }
+
+    fn with_string_array(
+        &self,
+        name: &str,
+        entries: &[String],
+        apply: impl FnOnce(*const c_char, *mut c_void) -> c_int,
+    ) -> Result<(), String> {
         let name = CString::new(name).map_err(|error| error.to_string())?;
         let entries = entries
             .iter()
@@ -336,15 +366,7 @@ impl Api {
             value: NodeValue { list: &mut list },
             format: FORMAT_NODE_ARRAY,
         };
-        // SAFETY: mpv_set_option copies the node array synchronously. The strings
-        // and nodes remain alive through this call.
-        self.check(unsafe {
-            (self.option_node)(
-                handle,
-                name.as_ptr(),
-                FORMAT_NODE,
-                (&mut node as *mut Node).cast(),
-            )
-        })
+        // The node borrows these strings and arrays only for this synchronous call.
+        self.check(apply(name.as_ptr(), (&mut node as *mut Node).cast()))
     }
 }
