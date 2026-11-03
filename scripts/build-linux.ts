@@ -107,7 +107,7 @@ try {
         if (!name.endsWith(".spdx.json"))
             continue;
         const sbom = JSON.parse(await readFile(join(qtPrefix, "sbom", name), "utf8"));
-        const deployed = sbom.files.some((file: { fileName: string }) => {
+        const deployed = sbom.files?.some((file: { fileName: string }) => {
             const path = file.fileName.replace(/^\.\//, "").replace(/(\.so\.\d+)\.\d+\.\d+$/, "$1");
             return Bun.file(join(bundle, path)).size > 0;
         });
