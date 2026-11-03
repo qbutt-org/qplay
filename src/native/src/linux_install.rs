@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 
@@ -192,12 +192,7 @@ pub fn install_archive(archive: &Path, target: &Path, version: &str) -> Result<(
     }
     let stage = stage_directory(target)?;
     let result = (|| {
-        let archive = File::open(archive).map_err(|error| format!("Open qplay update: {error}"))?;
-        let mut archive =
-            ZipArchive::new(archive).map_err(|error| format!("Read qplay update: {error}"))?;
-        if archive.len() > 20000 {
-            return Err("The qplay update has too many files.".into());
-        }
+        let mut archive = open_archive(archive)?;
         let mut unpacked = 0u64;
         for index in 0..archive.len() {
             let mut member = archive
@@ -248,6 +243,11 @@ pub fn install_archive(archive: &Path, target: &Path, version: &str) -> Result<(
             fs::remove_file(stage.join("qplay.portable"))
                 .map_err(|error| format!("Remove portable update marker: {error}"))?;
         }
+        let manifest: Manifest = serde_json::from_slice(
+            &fs::read(stage.join("build-manifest.json")).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| format!("Read update manifest: {error}"))?;
+        verify_owned_directory(&stage, &stage, &manifest)?;
         commit(&stage, target, version)?;
         register(target)
     })();
@@ -261,9 +261,7 @@ pub fn install_from_archive(path: &Path) -> Result<String, String> {
     if !path.is_absolute() {
         return Err("The update archive needs an absolute path.".into());
     }
-    let file = File::open(path).map_err(|error| format!("Open qplay update: {error}"))?;
-    let mut archive =
-        ZipArchive::new(file).map_err(|error| format!("Read qplay update: {error}"))?;
+    let mut archive = open_archive(path)?;
     let mut entry = archive
         .by_name("build-manifest.json")
         .map_err(|error| format!("Find qplay update manifest: {error}"))?;
@@ -284,6 +282,53 @@ pub fn install_from_archive(path: &Path) -> Result<String, String> {
     let target = destination()?;
     install_archive(path, &target, &manifest.version)?;
     Ok(target.join("qplay").to_string_lossy().into_owned())
+}
+
+fn open_archive(path: &Path) -> Result<ZipArchive<File>, String> {
+    let file = File::open(path).map_err(|error| format!("Open qplay update: {error}"))?;
+    let size = file.metadata().map_err(|error| error.to_string())?.len();
+    if size > crate::app_update::MAX_INSTALLER_SIZE {
+        return Err("The qplay update archive is too large.".into());
+    }
+    let mut footer_file = file.try_clone().map_err(|error| error.to_string())?;
+    let archive = ZipArchive::new(file).map_err(|error| format!("Read qplay update: {error}"))?;
+    let footer_position = footer_file
+        .seek(SeekFrom::End(-22 - archive.comment().len() as i64))
+        .map_err(|error| format!("Read qplay ZIP footer: {error}"))?;
+    let mut footer = [0u8; 22];
+    footer_file
+        .read_exact(&mut footer)
+        .map_err(|error| error.to_string())?;
+    let entries = u16::from_le_bytes([footer[10], footer[11]]) as usize;
+    if footer[..4] != [0x50, 0x4b, 0x05, 0x06]
+        || footer[4..8] != [0; 4]
+        || footer[8..10] != footer[10..12]
+        || entries == 0
+        || entries > 20000
+        || footer[12..16] == [0xff; 4]
+        || footer[16..20] == [0xff; 4]
+    {
+        return Err("The qplay update requires a single-disk ZIP32 archive.".into());
+    }
+    // The release packager emits ZIP32. Reject a ZIP64 locator even when its
+    // legacy footer happens to contain an unsaturated file count.
+    if footer_position >= 20 {
+        footer_file
+            .seek(SeekFrom::Start(footer_position - 20))
+            .map_err(|error| error.to_string())?;
+        let mut signature = [0u8; 4];
+        footer_file
+            .read_exact(&mut signature)
+            .map_err(|error| error.to_string())?;
+        if signature == [0x50, 0x4b, 0x06, 0x07] {
+            return Err("The qplay update requires a single-disk ZIP32 archive.".into());
+        }
+    }
+    // zip 4.6 indexes names in a map, so len() alone hides duplicate raw entries.
+    if entries != archive.len() {
+        return Err("The qplay update contains duplicate file names.".into());
+    }
+    Ok(archive)
 }
 
 fn register(target: &Path) -> Result<(), String> {

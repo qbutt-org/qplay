@@ -45,7 +45,7 @@ const UPDATE_SUFFIX: &str = "-linux-x64.zip";
 const RELEASE_URL: &str = "https://api.github.com/repos/qbutt-org/qplay/releases/latest";
 const DOWNLOAD_PREFIX: &str = "https://github.com/qbutt-org/qplay/releases/download/";
 const MAX_RELEASE_JSON: u64 = 1024 * 1024;
-const MAX_INSTALLER_SIZE: u64 = 1024 * 1024 * 1024;
+pub(crate) const MAX_INSTALLER_SIZE: u64 = 1024 * 1024 * 1024;
 static NEXT_STAGE: AtomicU64 = AtomicU64::new(1);
 
 pub enum CheckResult {

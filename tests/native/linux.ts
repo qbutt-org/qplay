@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { createConnection, type Socket } from "node:net";
 import { join, resolve } from "node:path";
 
@@ -200,6 +200,66 @@ const beforeFailure = await stat(installed);
 await run(installed, [`--install-from=${malformed}`], 1, "Read qplay update");
 assert.equal((await stat(installed)).ino, beforeFailure.ino, "A failed archive update changed the installed application.");
 await rm(malformed);
+
+// A raw central-directory duplicate remains visible in EOCD counts even though
+// zip 4.6 collapses it in its filename map. Reuse the real release payload.
+const archiveBytes = await readFile(archive);
+const footerOffset = archiveBytes.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+assert(footerOffset > 0);
+const footer = Buffer.from(archiveBytes.subarray(footerOffset));
+const directoryOffset = footer.readUInt32LE(16);
+let directoryEntry = directoryOffset;
+let duplicate: Buffer | undefined;
+while (directoryEntry < footerOffset) {
+    assert.equal(archiveBytes.readUInt32LE(directoryEntry), 0x02014b50);
+    const nameLength = archiveBytes.readUInt16LE(directoryEntry + 28);
+    const entryLength = 46 + nameLength + archiveBytes.readUInt16LE(directoryEntry + 30) + archiveBytes.readUInt16LE(directoryEntry + 32);
+    if (archiveBytes.subarray(directoryEntry + 46, directoryEntry + 46 + nameLength).toString() === "build-manifest.json")
+        duplicate = archiveBytes.subarray(directoryEntry, directoryEntry + entryLength);
+    directoryEntry += entryLength;
+}
+assert(duplicate);
+const duplicateFooter = Buffer.from(footer);
+duplicateFooter.writeUInt16LE(footer.readUInt16LE(8) + 1, 8);
+duplicateFooter.writeUInt16LE(footer.readUInt16LE(10) + 1, 10);
+duplicateFooter.writeUInt32LE(footer.readUInt32LE(12) + duplicate.length, 12);
+const duplicateArchive = join(evidence, "duplicate.zip");
+await writeFile(duplicateArchive, Buffer.concat([archiveBytes.subarray(0, footerOffset), duplicate, duplicateFooter]));
+await run(installed, [`--install-from=${duplicateArchive}`], 1, "duplicate file names");
+assert.equal((await stat(installed)).ino, beforeFailure.ino);
+await rm(duplicateArchive);
+
+// ZIP64 can carry unsaturated legacy fields. Its explicit locator must still
+// be refused by the bounded ZIP32 release format.
+const zip64 = Buffer.alloc(76);
+zip64.writeUInt32LE(0x06064b50, 0);
+zip64.writeBigUInt64LE(44n, 4);
+zip64.writeUInt16LE(45, 12);
+zip64.writeUInt16LE(45, 14);
+zip64.writeBigUInt64LE(BigInt(footer.readUInt16LE(10)), 24);
+zip64.writeBigUInt64LE(BigInt(footer.readUInt16LE(10)), 32);
+zip64.writeBigUInt64LE(BigInt(footer.readUInt32LE(12)), 40);
+zip64.writeBigUInt64LE(BigInt(directoryOffset), 48);
+zip64.writeUInt32LE(0x07064b50, 56);
+zip64.writeBigUInt64LE(BigInt(footerOffset), 64);
+zip64.writeUInt32LE(1, 72);
+const zip64Archive = join(evidence, "zip64.zip");
+await writeFile(zip64Archive, Buffer.concat([archiveBytes.subarray(0, footerOffset), zip64, footer]));
+await run(installed, [`--install-from=${zip64Archive}`], 1, "single-disk ZIP32");
+assert.equal((await stat(installed)).ino, beforeFailure.ino);
+await rm(zip64Archive);
+
+const unlistedArchive = join(evidence, "unlisted.zip");
+const unlistedMember = join(evidence, "unlisted.fixture");
+await copyFile(archive, unlistedArchive);
+await writeFile(unlistedMember, "Generated unlisted archive member.\n");
+const append = Bun.spawn(["/usr/bin/zip", "-q", unlistedArchive, "unlisted.fixture"], { cwd: evidence });
+assert.equal(await append.exited, 0);
+await run(installed, [`--install-from=${unlistedArchive}`], 1, "unowned file");
+assert.equal((await stat(installed)).ino, beforeFailure.ino);
+assert(!await Bun.file(join(data, "qplay/app/unlisted.fixture")).exists());
+await rm(unlistedArchive);
+await rm(unlistedMember);
 const unsafeDirectory = join(evidence, "unsafe-archive");
 const unsafeArchive = join(evidence, "unsafe.zip");
 await mkdir(unsafeDirectory);
@@ -234,6 +294,9 @@ const receipt = {
     installRepeatUninstall: true, dataPreserved: true, unownedFilesPreserved: true,
     archiveUpdate: true, malformedUpdatePreservedInstallation: true,
     unsafeArchivePreservedInstallation: true,
+    duplicateArchivePreservedInstallation: true,
+    zip64ArchivePreservedInstallation: true,
+    unlistedArchivePreservedInstallation: true,
     toolsWorkedWithoutSdkOrCallerPath: true,
 };
 await writeFile(join(evidence, "commands.jsonl"), `${log.join("\n")}\n`);

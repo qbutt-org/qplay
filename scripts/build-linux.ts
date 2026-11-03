@@ -10,12 +10,14 @@ const { values } = parseArgs({ options: {
     output: { type: "string", default: join(tmpdir(), "qplay-build") },
     "native-build": { type: "string" },
     "linux-runtime": { type: "string" },
+    "qt-licenses": { type: "string" },
 } });
-if (process.platform !== "linux" || process.arch !== "x64" || !values["native-build"] || !values["linux-runtime"])
-    throw new Error("Usage on Linux x64: bun run build -- --native-build <build> --linux-runtime <verified engine> [--output <directory>]");
+if (process.platform !== "linux" || process.arch !== "x64" || !values["native-build"] || !values["linux-runtime"] || !values["qt-licenses"])
+    throw new Error("Usage on Linux x64: bun run build -- --native-build <build> --linux-runtime <verified engine> --qt-licenses <verified Qt notices> [--output <directory>]");
 const output = resolve(values.output!);
 const nativeBuild = resolve(values["native-build"]);
 const runtime = resolve(values["linux-runtime"]);
+const qtLicenses = resolve(values["qt-licenses"]);
 if (output === root || output.startsWith(`${root}/`))
     throw new Error("Build output must be outside the source repository.");
 const lock = JSON.parse(await readFile(join(root, "upstream-lock.json"), "utf8"));
@@ -68,6 +70,15 @@ const qtPrefix = resolve(qtCmake, "../../..");
 const qtVersion = await run([join(qtPrefix, "bin/qtpaths"), "--qt-version"]);
 if (qtVersion !== lock.qt.version)
     throw new Error(`Qt ${qtVersion} differs from pinned ${lock.qt.version}.`);
+if (await digest(join(qtLicenses, "manifest.json")) !== lock.qt.licenseManifestSha256)
+    throw new Error("The Qt license manifest differs from its pin.");
+const qtLicenseManifest = JSON.parse(await readFile(join(qtLicenses, "manifest.json"), "utf8"));
+if (qtLicenseManifest.schemaVersion !== 1 || qtLicenseManifest.qtVersion !== qtVersion)
+    throw new Error("The Qt license manifest has an unsupported version.");
+for (const notice of qtLicenseManifest.licenses) {
+    if (basename(notice.file) !== notice.file || await digest(join(qtLicenses, notice.file)) !== notice.sha256)
+        throw new Error(`The Qt license differs from its pin: ${notice.file}`);
+}
 const runtimeFiles = await files(runtime);
 if (JSON.stringify(runtimeFiles) !== JSON.stringify(Object.keys(lock.linux.runtime.files).sort()))
     throw new Error("The Linux runtime file inventory differs from its pin.");
@@ -89,6 +100,20 @@ try {
     for (const name of ["LICENSE", "upstream-lock.json"])
         await cp(join(root, name), join(bundle, name));
     await cp(join(root, "assets/qplay.svg"), join(bundle, "qplay.svg"));
+    await mkdir(join(bundle, "licenses/qt"), { recursive: true });
+    for (const name of ["manifest.json", ...qtLicenseManifest.licenses.map((notice: { file: string }) => notice.file)])
+        await cp(join(qtLicenses, name), join(bundle, "licenses/qt", name));
+    for (const name of await readdir(join(qtPrefix, "sbom"))) {
+        if (!name.endsWith(".spdx.json"))
+            continue;
+        const sbom = JSON.parse(await readFile(join(qtPrefix, "sbom", name), "utf8"));
+        const deployed = sbom.files.some((file: { fileName: string }) => {
+            const path = file.fileName.replace(/^\.\//, "").replace(/(\.so\.\d+)\.\d+\.\d+$/, "$1");
+            return Bun.file(join(bundle, path)).size > 0;
+        });
+        if (deployed)
+            await cp(join(qtPrefix, "sbom", name), join(bundle, "licenses/qt", name));
+    }
 
     // Qt's deployment uses SONAME links. Release verification and the native
     // installer deliberately own regular files with one immutable inventory.
@@ -112,7 +137,7 @@ try {
         inventory[name] = await digest(path);
     }
     for (const name of Object.keys(inventory)) {
-        if (name.startsWith("translations/") && name !== "translations/qt_en.qm" && name !== "translations/qt_ru.qm") {
+        if (name.startsWith("translations/") && !/_(en|ru)\.qm$/.test(name)) {
             await rm(join(bundle, name));
             delete inventory[name];
             continue;
