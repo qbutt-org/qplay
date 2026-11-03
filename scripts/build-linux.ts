@@ -157,7 +157,7 @@ try {
         sourceWorktreeChanged: Boolean(await run(["git", "status", "--porcelain"])),
         buildSystem: "CMake, CXX-Qt and Rust", qtVersion,
         minimumGlibc: lock.linux.minimumGlibc,
-        runtime: lock.linux.runtime.sources,
+        runtime: JSON.parse(await readFile(join(bundle, "engine/sources.json"), "utf8")),
         files: inventory,
     };
     await writeFile(join(bundle, "build-manifest.json"), `${JSON.stringify(manifest, null, 4)}\n`);

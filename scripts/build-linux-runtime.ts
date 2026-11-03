@@ -285,7 +285,7 @@ try {
         }
         await rename(join(stage, name), previous);
     }
-    pins.runtime = { files: newInventory, sources };
+    pins.runtime = { files: newInventory };
     await writeFile(join(output, "linux-runtime.json"), `${JSON.stringify(pins, null, 2)}\n`);
     if (values["update-lock"])
         await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
