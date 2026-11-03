@@ -40,6 +40,8 @@
 
 ## Installation
 
+### Windows
+
 Run **qplay-setup.exe**. qplay supports Windows 10 version 2004 or later and Windows 11, x64. qplay appears in the Start menu and the Windows apps list.
 
 For the portable version, extract **qplay-portable.zip** and run `qplay.exe`.
@@ -48,13 +50,21 @@ The installed version downloads updates in the background and installs them afte
 
 Open a media file or a direct URL in the player window. qplay appears in the Windows **Open with** menu for common video and audio formats. It does not change your default player.
 
+### Linux
+
+Linux x64 builds target Ubuntu 24.04 or later with glibc 2.39+. See [Development](#development) for building the bundle from source.
+
+Extract the built `qplay-linux-x64.zip`. Run `./qplay` for a portable instance with its profile in `userdata`. Run `./qplay --install` to install for the current user, then open qplay from the applications menu or run `~/.local/bin/qplay`.
+
+Close the player before updating. Install a new ZIP with `~/.local/bin/qplay --install-from=/absolute/path/qplay-linux-x64.zip`. `~/.local/bin/qplay --uninstall` removes the app while preserving settings and playback data.
+
 ## Controls and image quality
 
-The settings button at the bottom right opens audio tracks, subtitles, and playback speed. Image processing and frame generation are available there too. Their availability depends on the GPU and video.
+The settings button at the bottom right opens audio tracks, subtitles, playback speed, and image processing. Upscaling depends on the GPU and video; frame generation is available only on Windows.
 
 You can turn subtitles off, choose a track from the video, or add a separate subtitle file. The player remembers where you stopped and resumes when you reopen the video.
 
-Basic playback works offline from the installed bundle. GPU modes may automatically download and prepare additional components.
+Basic playback works offline from the installed bundle. On Windows, frame generation may download additional components automatically.
 
 ## qbutt and qcatch
 
@@ -64,7 +74,7 @@ Basic playback works offline from the installed bundle. GPU modes may automatica
 
 ## Settings
 
-The installed version stores settings in `%APPDATA%\qplay`, and caches and prepared GPU components in `%LOCALAPPDATA%\qplay`. The portable version uses the `userdata` folder next to the app. Existing mpv and mpv.net settings are not replaced.
+On Windows, the installed version stores settings in `%APPDATA%\qplay`, and caches and prepared GPU components in `%LOCALAPPDATA%\qplay`. Linux uses XDG directories, defaulting to `~/.config/qplay`, `~/.local/share/qplay`, and `~/.cache/qplay` for settings, data, and cache. The portable version uses the `userdata` folder next to the app. Existing mpv and mpv.net settings are not replaced.
 
 Advanced settings include language, appearance, and a persistent audio delay relative to video. Your image processing choice survives a restart.
 
@@ -72,7 +82,7 @@ Advanced settings include language, appearance, and a persistent audio delay rel
 
 The native player lives in `src/native/`. QML owns the interface; Rust owns the libmpv session and settings. Pinned dependencies and runtime provenance are recorded in `upstream-lock.json`.
 
-Local builds require Qt 6.12, CMake, MSVC, the Rust toolchain from `rust-toolchain.toml`, and Bun. Configure the CMake build, then run this from Developer PowerShell with your build directory and Inno Setup 6.7.3:
+Local builds require Qt 6.12, CMake, the Rust toolchain from `rust-toolchain.toml`, and Bun. Windows also requires MSVC and Inno Setup 6.7.3. Configure the CMake build, then run this from Developer PowerShell with your build directory:
 
 ```powershell
 bun scripts/build.ts --native-build "C:\build\qplay-native" --installer-compiler "C:\tools\Inno Setup 6\ISCC.exe"
@@ -80,7 +90,9 @@ bun scripts/build.ts --native-build "C:\build\qplay-native" --installer-compiler
 
 The script checks the native build source revision, rebuilds changed files, verifies the pinned runtime, deploys Qt/QML, and creates the installer and portable archive in `%TEMP%\qplay-build`. Use `--runtime-archive` for a downloaded archive and `--output` for another result directory.
 
-`qplay.exe --version-json` and `qplay.exe --runtime-info-json` return integration metadata. The player accepts a file path or URL as one argument.
+On Linux, `scripts/build-linux-runtime.ts` prepares the pinned media engine, and `scripts/build-linux.ts` packages the CMake build as `qplay-linux-x64.zip`. Packaging requires `--native-build`, `--linux-runtime`, and `--qt-licenses`; `--output` sets the result directory. `scripts/build-linux-sources.ts` builds the complete runtime source archive.
+
+`qplay --version-json` and `qplay --runtime-info-json` return integration metadata; the Windows executable is `qplay.exe`. The player accepts a file path or URL as one argument.
 
 See the [project rules](AGENTS.md).
 
@@ -88,4 +100,4 @@ See the [project rules](AGENTS.md).
 
 The bundle includes the Qt interface, shaders, and media dependencies with their authors' notices. Licenses are in [licenses/](licenses/), and qplay source terms are in [LICENSE](LICENSE).
 
-qplay sources are available in this repository. Complete media engine and dependency sources for version 1.0.0 are published in a [separate technical release](https://github.com/qbutt-org/qplay/releases/tag/v1.0.0-sources).
+qplay source is available from the corresponding release tag. Exact media engine and dependency sources are provided in a separate technical release linked from the product release description.
