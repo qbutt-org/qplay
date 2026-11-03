@@ -1,6 +1,4 @@
-use std::fs::{self, File, OpenOptions};
-use std::future::Future;
-use std::io::{Read, Write};
+use std::fs::{self, OpenOptions};
 #[cfg(windows)]
 use std::os::windows::io::{FromRawHandle, OwnedHandle};
 
@@ -13,7 +11,6 @@ use std::time::Duration;
 use reqwest::Client;
 use reqwest::StatusCode;
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 #[cfg(windows)]
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
@@ -26,7 +23,7 @@ use windows::Win32::System::Threading::{
 #[cfg(windows)]
 use windows::core::PWSTR;
 
-use crate::files::move_new_file;
+use crate::files::{download_file, move_new_file, run_network, verified_file};
 use crate::runtime_info::VERSION;
 
 #[cfg(windows)]
@@ -239,40 +236,22 @@ pub fn download(
     let mut owns_partial = false;
     let result = run_network(cancel, async {
         let client = client(Duration::from_secs(600))?;
-        let mut response = client
-            .get(&release.setup.url)
-            .send()
-            .await
-            .and_then(|response| response.error_for_status())
-            .map_err(|error| format!("Download qplay update: {error}"))?;
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&partial)
             .map_err(|error| format!("Stage qplay update: {error}"))?;
         owns_partial = true;
-        let mut hash = Sha256::new();
-        let mut received = 0_u64;
-
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|error| format!("Read qplay update: {error}"))?
-        {
-            received += chunk.len() as u64;
-            if received > release.setup.size {
-                return Err("qplay update exceeds its published size.".into());
-            }
-            hash.update(&chunk);
-            file.write_all(&chunk)
-                .map_err(|error| format!("Stage qplay update: {error}"))?;
-            progress((received * 100 / release.setup.size) as i32);
-        }
-        if received != release.setup.size || format!("{:x}", hash.finalize()) != digest {
-            return Err("qplay update failed its integrity check.".into());
-        }
-        file.sync_all()
-            .map_err(|error| format!("Flush qplay update: {error}"))?;
+        download_file(
+            &client,
+            &release.setup.url,
+            release.setup.size,
+            digest,
+            &mut file,
+            &mut |received, total| progress((received * 100 / total) as i32),
+            "qplay update",
+        )
+        .await?;
         drop(file);
         if cancel.load(Ordering::Acquire) {
             return Err("qplay update cancelled.".into());
@@ -374,58 +353,6 @@ pub fn start_installer(
         .spawn()
         .map_err(|error| format!("Start qplay installer: {error}"))?;
     Ok(())
-}
-
-fn verified_file(path: &Path, size: u64, digest: &str) -> Result<bool, String> {
-    let metadata = match fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(format!("Inspect qplay update: {error}")),
-    };
-    if !metadata.is_file() || metadata.len() != size || crate::files::is_link(&metadata) {
-        return Ok(false);
-    }
-    let mut file = File::open(path).map_err(|error| format!("Read qplay update: {error}"))?;
-    let mut hash = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let count = file
-            .read(&mut buffer)
-            .map_err(|error| format!("Read qplay update: {error}"))?;
-        if count == 0 {
-            break;
-        }
-        hash.update(&buffer[..count]);
-    }
-    Ok(format!("{:x}", hash.finalize()) == digest)
-}
-
-fn run_network<T>(
-    cancel: &AtomicBool,
-    operation: impl Future<Output = Result<T, String>>,
-) -> Result<Option<T>, String> {
-    if cancel.load(Ordering::Acquire) {
-        return Ok(None);
-    }
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|error| format!("Start qplay update network: {error}"))?;
-    let result = runtime.block_on(async {
-        tokio::select! {
-            biased;
-            _ = wait_for_cancel(cancel) => Ok(None),
-            result = operation => result.map(Some),
-        }
-    });
-    runtime.shutdown_timeout(Duration::from_secs(1));
-    result
-}
-
-async fn wait_for_cancel(cancel: &AtomicBool) {
-    while !cancel.load(Ordering::Acquire) {
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
 }
 
 fn client(timeout: Duration) -> Result<Client, String> {

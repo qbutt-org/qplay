@@ -583,11 +583,11 @@ Popup {
 
                 Label {
                     objectName: "framegenAvailability"
-                    visible: !root.backend.framegenSupported || root.backend.framegenStatus === "loading" || root.backend.framegenStatus === "prepared" || root.backend.framegenStatus === "guarded"
+                    visible: !root.backend.framegenSupported || root.backend.framegenStatus === "loading" || root.backend.framegenStatus === "guarded"
                     Layout.fillWidth: true
                     Layout.topMargin: 4
                     wrapMode: Text.WordWrap
-                    text: !root.backend.framegenSupported ? (root.russian ? qsTr("Недоступно в Linux") : qsTr("Unavailable on Linux")) : root.backend.framegenStatus === "loading" ? (root.russian ? qsTr("Подготовка в фоне") : qsTr("Preparing in the background")) : root.backend.framegenStatus === "prepared" ? (root.russian ? qsTr("Готово для следующего видео") : qsTr("Ready for the next video")) : (root.russian ? qsTr("Недоступно для этого видео") : qsTr("Unavailable for this video"))
+                    text: !root.backend.framegenSupported ? (root.russian ? qsTr("Недоступно") : qsTr("Unavailable")) : root.backend.framegenStatus === "loading" ? (root.russian ? qsTr("Подготовка в фоне") : qsTr("Preparing in the background")) : (root.russian ? qsTr("Недоступно для этого видео") : qsTr("Unavailable for this video"))
                     color: "#b9bec4"
                     font.pixelSize: 13
                 }

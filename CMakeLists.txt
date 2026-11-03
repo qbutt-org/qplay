@@ -104,6 +104,8 @@ qt_add_executable(qplay-native-acceptance WIN32
     tests/native/player.cpp
     tests/native/downloads.cpp
     tests/native/downloads.h
+    tests/native/framegen.cpp
+    tests/native/framegen.h
     tests/native/startup.cpp
     tests/native/startup.h
 )
@@ -111,9 +113,15 @@ target_link_libraries(qplay-native-acceptance
     PRIVATE qplay_views qplay_viewsplugin qplay_native qplay_player_plugin Qt::Network
 )
 
+add_library(qplay-framegen-model-fixture MODULE tests/native/framegen_model.cpp)
+target_include_directories(qplay-framegen-model-fixture PRIVATE src/native/include)
+
+add_executable(qplay-framegen-graph-acceptance tests/native/framegen_graph.cpp)
+target_include_directories(qplay-framegen-graph-acceptance PRIVATE src/native/include)
+target_link_libraries(qplay-framegen-graph-acceptance PRIVATE qplay_native ${CMAKE_DL_LIBS})
+
 if(WIN32)
-    target_link_libraries(qplay-native PRIVATE bcrypt)
-    target_link_libraries(qplay-native-acceptance PRIVATE bcrypt)
+    target_link_libraries(qplay_native INTERFACE bcrypt)
 endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")

@@ -36,6 +36,14 @@ void Qplay::startSubtitleTask(::rust::Box<SubtitleTask> task)
     });
 }
 
+void Qplay::startGpuTask(::rust::Box<GpuTask> task)
+{
+    QThreadPool::globalInstance()->start([task = std::move(task)]() mutable
+    {
+        run_gpu_task(std::move(task));
+    });
+}
+
 void Qplay::scheduleDownloadTimeout(PlayerController &player, const QString &token, const int milliseconds)
 {
     QTimer::singleShot(milliseconds, Qt::PreciseTimer, &player, [&player, token] { player.downloadTimeout(token); });

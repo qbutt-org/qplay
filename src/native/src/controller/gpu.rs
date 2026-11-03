@@ -16,7 +16,7 @@ use crate::gpu::framegen::{
 };
 use crate::gpu::hardware::{self, HardwareProfile};
 use crate::gpu::probe::classify_file;
-use crate::gpu::runtime::{Manager, Runtime};
+use crate::gpu::runtime::{Runtime, RuntimeStore};
 use crate::gpu::shaders::{self, AutoOptions, ShaderChoice, ShaderPreset, ShaderQuality};
 use crate::gpu::timing::{self, Timing};
 
@@ -176,6 +176,56 @@ struct ProbeResult {
     error: Option<String>,
 }
 
+pub struct GpuTask {
+    input: ProbeInput,
+    cancel: Arc<AtomicBool>,
+    generation: u64,
+    thread: Box<cxx_qt::CxxQtThread<ffi::PlayerController>>,
+}
+
+#[expect(
+    clippy::boxed_local,
+    reason = "CXX transfers this worker task in an owning Rust box"
+)]
+pub fn run_gpu_task(task: Box<GpuTask>) {
+    let GpuTask {
+        input,
+        cancel,
+        generation,
+        thread,
+    } = *task;
+    let progress_thread = thread.clone();
+    let result = probe(input, &cancel, || {
+        let _ = progress_thread.queue(move |mut player| {
+            if player.gpu.generation == generation {
+                player.as_mut().rust_mut().gpu.framegen_status = "loading".into();
+                player.as_mut().state_changed();
+            }
+        });
+    });
+    if cancel.load(Ordering::Acquire) {
+        return;
+    }
+    let _ = thread.queue(move |mut player| {
+        if player.gpu.generation != generation || !player.file_loaded {
+            return;
+        }
+        {
+            let gpu = &mut player.as_mut().rust_mut().gpu;
+            gpu.detected = result.detected;
+            gpu.timing = result.timing;
+            gpu.hardware = result.hardware;
+            gpu.runtime = result.runtime;
+            gpu.selection = result.selection;
+            gpu.filter = result.filter;
+            gpu.framegen_status = result.framegen_status;
+            gpu.error = result.error.unwrap_or_default();
+            gpu.cancel = None;
+        }
+        player.as_mut().apply_gpu_policy();
+    });
+}
+
 fn probe(input: ProbeInput, cancel: &AtomicBool, on_prepare: impl FnOnce()) -> ProbeResult {
     let detected = input
         .local
@@ -240,10 +290,10 @@ fn probe(input: ProbeInput, cancel: &AtomicBool, on_prepare: impl FnOnce()) -> P
             _ => None,
         }
     };
-    let (runtime, mut error) = if wants_framegen && guard.is_none() {
+    let (mut runtime, mut error) = if wants_framegen && guard.is_none() {
         on_prepare();
-        let manager = Manager::new(&input.engine_root, &input.runtime_root);
-        match manager.prepare(cancel) {
+        let store = RuntimeStore::new(&input.engine_root, &input.runtime_root);
+        match store.prepare(cancel) {
             Ok(runtime) => (Some(runtime), None),
             Err(error) => (None, Some(error)),
         }
@@ -256,7 +306,7 @@ fn probe(input: ProbeInput, cancel: &AtomicBool, on_prepare: impl FnOnce()) -> P
     let mut filter = None;
     let mut selection = None;
     let mut framegen_status = if wants_framegen { "guarded" } else { "off" }.to_owned();
-    if let (Some(runtime), Some(timing)) = (&runtime, timing) {
+    if let (Some(runtime), Some(timing)) = (&mut runtime, timing) {
         let video = framegen::VideoInfo {
             has_video: true,
             width: input.width,
@@ -274,30 +324,23 @@ fn probe(input: ProbeInput, cancel: &AtomicBool, on_prepare: impl FnOnce()) -> P
             runtime.model_path().is_file(),
         ) {
             Ok(Some(chosen)) => {
-                let script = input.engine_root.join("profile/framegen/framegen.vpy");
-                let preparer = input.engine_root.join("profile/framegen/prepare.py");
-                let manager = Manager::new(&input.engine_root, &input.runtime_root);
-                match framegen::graph(
-                    runtime,
-                    &script,
-                    timing.source_rate,
-                    chosen,
-                    &input.matrix,
-                    input.full_range,
-                )
-                .and_then(|(spec, config)| {
-                    let ready = runtime.prepare_engine(&preparer, &config, cancel)?;
-                    if ready {
-                        runtime.load_vsscript(manager.runtime_root())?;
-                    }
-                    Ok((spec, ready))
-                }) {
-                    Ok((spec, true)) => {
+                match runtime
+                    .prepare_engine(input.width, input.height, cancel)
+                    .and_then(|()| {
+                        framegen::graph(
+                            runtime,
+                            timing.source_rate,
+                            chosen,
+                            &input.matrix,
+                            input.full_range,
+                            input.width,
+                        )
+                    }) {
+                    Ok(spec) => {
                         selection = Some(chosen);
                         filter = Some(spec);
                         framegen_status = "starting".into();
                     }
-                    Ok((_, false)) => framegen_status = "prepared".into(),
                     Err(reason) => {
                         error = Some(reason);
                         framegen_status = "error".into();
@@ -440,40 +483,14 @@ impl ffi::PlayerController {
         };
         let cancel = Arc::new(AtomicBool::new(false));
         let generation = self.gpu.generation;
-        let thread = self.qt_thread();
+        let thread = Box::new(self.qt_thread());
         self.as_mut().rust_mut().gpu.cancel = Some(cancel.clone());
-        std::thread::spawn(move || {
-            let progress_thread = thread.clone();
-            let result = probe(input, &cancel, || {
-                let _ = progress_thread.queue(move |mut player| {
-                    if player.gpu.generation == generation {
-                        player.as_mut().rust_mut().gpu.framegen_status = "loading".into();
-                        player.as_mut().state_changed();
-                    }
-                });
-            });
-            if cancel.load(Ordering::Acquire) {
-                return;
-            }
-            let _ = thread.queue(move |mut player| {
-                if player.gpu.generation != generation || !player.file_loaded {
-                    return;
-                }
-                {
-                    let gpu = &mut player.as_mut().rust_mut().gpu;
-                    gpu.detected = result.detected;
-                    gpu.timing = result.timing;
-                    gpu.hardware = result.hardware;
-                    gpu.runtime = result.runtime;
-                    gpu.selection = result.selection;
-                    gpu.filter = result.filter;
-                    gpu.framegen_status = result.framegen_status;
-                    gpu.error = result.error.unwrap_or_default();
-                    gpu.cancel = None;
-                }
-                player.as_mut().apply_gpu_policy();
-            });
-        });
+        ffi::start_gpu_task(Box::new(GpuTask {
+            input,
+            cancel,
+            generation,
+            thread,
+        }));
     }
 
     pub(super) fn apply_gpu_policy(mut self: Pin<&mut Self>) {
@@ -709,9 +726,11 @@ impl ffi::PlayerController {
             eof: session.flag("eof-reached").unwrap_or(false),
             idle: session.flag("core-idle").unwrap_or(false),
             filter_active: self.gpu.active_filter.is_some() && present,
-            output_ready: session.number("video-out-params/w")
-                == Some(selection.output_width as f64)
-                && session.number("video-out-params/h") == Some(selection.output_height as f64),
+            output_ready: session.number("video-out-params/w") == session.number("video-params/w")
+                && session.number("video-out-params/h") == session.number("video-params/h")
+                && session
+                    .number("video-out-params/w")
+                    .is_some_and(|width| width > 0.0),
             sample,
         };
         if self.gpu.framegen_status == "starting"
@@ -753,11 +772,10 @@ impl ffi::PlayerController {
 
     fn lower_framegen(mut self: Pin<&mut Self>) {
         let generation = self.gpu.generation;
-        let (Some(runtime), Some(timing), Some(mut selection), Some(engine_root)) = (
+        let (Some(runtime), Some(timing), Some(mut selection)) = (
             self.gpu.runtime.as_ref(),
             self.gpu.timing,
             self.gpu.selection,
-            self.gpu.engine_root.as_ref(),
         ) else {
             return;
         };
@@ -767,16 +785,15 @@ impl ffi::PlayerController {
         };
         let matrix = session.text("video-params/colormatrix").unwrap_or_default();
         let full_range = session.text("video-params/colorlevels").as_deref() == Some("full");
-        let script = engine_root.join("profile/framegen/framegen.vpy");
         match framegen::graph(
             runtime,
-            &script,
             timing.source_rate,
             selection,
             &matrix,
             full_range,
+            session.number("video-params/w").unwrap_or(0.0) as u32,
         ) {
-            Ok((filter, _)) => {
+            Ok(filter) => {
                 self.as_mut().dispatch_gpu(
                     &["vf", "remove", "@mpv-framegen"],
                     GpuCommand::RemoveFilter {

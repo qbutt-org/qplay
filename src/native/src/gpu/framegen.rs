@@ -1,12 +1,35 @@
 use super::content::ContentKind;
 use super::runtime::Runtime;
-use serde_json::{Value, json};
-use std::path::Path;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 pub enum Backend {
+    #[serde(rename = "trt")]
     TensorRt,
+    #[serde(rename = "openvino")]
     OpenVino,
+}
+
+pub struct ModelShape {
+    pub width: u32,
+    pub height: u32,
+}
+
+pub fn model_shape(backend: Backend, width: u32, height: u32) -> ModelShape {
+    // The pinned OpenVINO model halves each extent before reflecting to a
+    // multiple of 64. OpenVINO requires that padding be smaller than the
+    // half-size extent: 64 - n < n, so floor(extent / 2) must be at least 33.
+    // The graph extends only these small model inputs and crops the result;
+    // source geometry and sample aspect ratio remain unchanged.
+    let minimum = match backend {
+        Backend::TensorRt => 0,
+        Backend::OpenVino => 66,
+    };
+    ModelShape {
+        width: width.max(minimum),
+        height: height.max(minimum),
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -119,8 +142,6 @@ pub struct Target {
 #[derive(Clone, Copy, Debug)]
 pub struct Selection {
     pub target: Target,
-    pub output_width: u32,
-    pub output_height: u32,
 }
 
 pub fn target_ladder(source: Rate, display: Rate, backend: Backend) -> Vec<Target> {
@@ -222,71 +243,59 @@ pub fn choose(
     }
     .ok_or(Unavailable::NoHeadroom)?;
 
-    let scale = (1920.0 / video.width as f64)
-        .min(1080.0 / video.height as f64)
-        .min(1.0);
-    let width = ((video.width as f64 * scale / 2.0).floor() as u32 * 2).max(2);
-    let height = ((video.height as f64 * scale / 2.0).floor() as u32 * 2).max(2);
-    Ok(Some(Selection {
-        target: *target,
-        output_width: width,
-        output_height: height,
-    }))
+    Ok(Some(Selection { target: *target }))
 }
 
 pub fn graph(
     runtime: &Runtime,
-    script: &Path,
     source: Rate,
     selection: Selection,
     matrix: &str,
     full_range: bool,
-) -> Result<(String, Value), String> {
+    source_width: u32,
+) -> Result<String, String> {
     let matrix = match matrix {
         "bt.709" => "709",
         "bt.601" => "470bg",
         "smpte-240m" => "240m",
         "bt.2020-ncl" => "2020ncl",
-        "" | "auto" | "unknown" if selection.output_width >= 1280 => "709",
+        "" | "auto" | "unknown" if source_width >= 1280 => "709",
         "" | "auto" | "unknown" => "470bg",
         _ => return Err("The video color matrix is unsupported by frame generation.".into()),
     };
     let config = json!({
-        "schema_version": 1,
-        "backend": match runtime.backend() { Backend::TensorRt => "trt", Backend::OpenVino => "openvino" },
-        "model": "4.26",
+        "schema_version": 2,
+        "backend": runtime.backend(),
         "source_num": source.num,
         "source_den": source.den,
         "target_num": selection.target.rate.num,
         "target_den": selection.target.rate.den,
-        "process_scale": 1,
-        "output_width": selection.output_width,
-        "output_height": selection.output_height,
         "scene_threshold": 0.08917166076596267_f64,
         "duplicate_threshold": 0.001,
-        "gpu_lock_owned": false,
-        "gpu_lock_bypassed": false,
         "matrix": matrix,
         "range": if full_range { "full" } else { "limited" },
-        "plugin_dir": runtime.plugin_dir,
-        "model_dir": runtime.model_dir,
-        "engine_dir": runtime.engine_dir,
-        "device_id": runtime.device_binding.device_ordinal,
+        "plugin_path": runtime.plugin_path(),
+        "model_path": runtime.model_path(),
+        "engine_path": runtime.engine_path()?,
+        "gpu_lock_path": runtime.gpu_lock_path,
+        "device_id": runtime.device_binding.ordinal,
         "gpu_id": runtime.device_binding.gpu_id,
+        "openvino_device": runtime.openvino_device,
     });
     let data = serde_json::to_string(&config)
         .map_err(|error| format!("Write frame generation filter: {error}"))?;
-    let script = script
+    let core = runtime.core_path();
+    let core = core
         .to_str()
-        .ok_or("The frame generation script path is not valid UTF-8.")?;
+        .ok_or("The native VapourSynth path is not valid UTF-8.")?;
     let filter = format!(
-        "@mpv-framegen:vapoursynth=file=%{}%{}:buffered-frames=8:concurrent-frames=8:user-data=%{}%{}",
-        script.len(),
-        script,
+        "@mpv-framegen:vapoursynth-native=file=%{}%{}:buffered-frames=8:concurrent-frames=8:user-data=%{}%{}",
+        core.len(),
+        core,
         data.len(),
         data,
     );
-    Ok((filter, config))
+    Ok(filter)
 }
 
 #[derive(Clone, Copy, Debug)]

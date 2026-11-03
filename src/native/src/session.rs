@@ -210,6 +210,11 @@ impl Session {
                 .set_string_map(handle, name, &entries)
                 .map_err(|error| format!("Set mpv option {name}: {error}"))?;
         }
+        // SAFETY: The static native factory remains valid through terminate_destroy.
+        // Registration belongs to this handle and precedes its only initialization.
+        raw.api.check(unsafe {
+            (raw.api.register_framegen)(handle, crate::framegen_graph::qplay_create_framegen_graph)
+        })?;
         // SAFETY: Initialize is called once, on the startup worker.
         raw.api.check(unsafe { (raw.api.initialize)(handle) })?;
         // Extractor stderr is emitted by the builtin hook as client log events.

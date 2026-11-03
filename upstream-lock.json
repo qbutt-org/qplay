@@ -16,16 +16,9 @@
     "path": "src/native/vendor/matroska-demuxer",
     "patch": "src/native/vendor/matroska-demuxer/qplay.patch"
   },
-  "nativeProfile": {
-    "framegenManager": {
-      "path": "profile/tools/bin/framegen-manager.exe",
-      "sha256": "7cd61366322fcdea10c31eb30923e6c98809ac31a1daca515ea650ab404e0339",
-      "binaryRevision": "9c192a73823bc00b88757b2d585acb551ba25170"
-    }
-  },
   "mpv": {
-    "version": "0.41.0-gb2c255c13-qbutt",
-    "source": "https://github.com/mpv-player/mpv/tree/b2c255c13e8e37952dbac6c34da56a690560378b"
+    "version": "0.41.0-dev-ga20e9ef79",
+    "source": "https://github.com/qbutt-org/qbutt-mpv/tree/a20e9ef795cbc874adf877576705cd0a9d09b3c5"
   },
   "ffmpeg": {
     "version": "9.0.2-6",
@@ -44,9 +37,9 @@
     "executableSha256": "e020f3e232bd16e33768dee528e5983349c962952051ced0a5d58ad42f5d9b33"
   },
   "runtime": {
-    "url": "https://github.com/qbutt-org/qplay/releases/download/v1.0.0-sources/qplay-1.0.0-runtime.zip",
-    "sha256": "dd69bb46843baf25191e65d954beda7506d058e9e0ad809248b5e635b05d50e1",
-    "size": 94446930,
+    "url": "https://github.com/qbutt-org/qplay/releases/download/v1.4.0-sources/qplay-native-framegen-windows-runtime.zip",
+    "sha256": "3d0b92526aaa621188084dd9ad0a6e97f985b639a4f4104dc627e9614a2ec44a",
+    "size": 88148267,
     "files": {
       "SDL2.dll": "5edf7b27c5769df67cb14970281b203b22b668c9dfde32b91b03b564dfc92a89",
       "avcodec-63.dll": "f215debc5de15c9f7d6048870fc9251e51aa5381d5c78cb13f74b8c681045aa8",
@@ -136,7 +129,7 @@
       "liblzma-5.dll": "0f69f59022c350bb1afd15a8ba68aa41aff32db73ba7f6776c1633e6d0b1df4b",
       "libmodplug-1.dll": "2332f4ee35cd29fc734e0bf4a8ad45f2de23509c85bab328aa286e10328ec89c",
       "libmp3lame-0.dll": "7e3cb5de500b8dfc1c2c497354a91630ead210b23b109eece504be152435293c",
-      "libmpv-2.dll": "13e1b7d7f71ef25999b973541347503c62c52cd1191369737c7602a511650f34",
+      "libmpv-2.dll": "bbfaa30f2fac5ebe90e9c3871a4547aab1b95278b7cce04dc3713977fb19e42c",
       "libmujs.dll": "9767e5d1cb2a3ed9e9b7d753ce916bb67025de7bafb7fe46e80cf4c7dd7ed08e",
       "libnettle-9.dll": "454c31b734c2ed3d50e5b1e6c147ed8e015c0bbe35d199a41647ab9ada1da5ef",
       "libnghttp2-14.dll": "003f24b4355a027b49d6a354d563859f19c6fcb0af42c17df3d77772070a619d",
@@ -377,9 +370,9 @@
     "bundledPath": "profile/certs/cacert.pem"
   },
   "sourceArchive": {
-    "url": "https://github.com/qbutt-org/qplay/releases/download/v1.0.0-sources/qplay-1.0.0-runtime-sources.zip",
-    "sha256": "ed37bcf1f833e392ab5c71132e79de7efb27164c1611e0134ed0c6ce08718a4a",
-    "size": 1432941010
+    "url": "https://github.com/qbutt-org/qplay/releases/download/v1.4.0-sources/qplay-native-framegen-windows-runtime-sources.zip",
+    "sha256": "b08be7206c37fbada0c04f1d0103b4bf71c5e6a4b5b8774b00fb2155957750c5",
+    "size": 1441572902
   },
   "importedFrom": {
     "path": "resources/media",
@@ -387,8 +380,6 @@
     "commit": "12fbe1a904c8b3c98bec3dd84f503a6072233de0"
   },
   "importedProfileHashes": {
-    "profile/tools/bin/framegen-manager.exe": "90fc0b2c9e78f96e0f5609b93d631b4c215a332cb5da22de8ea822a0148e8a25",
-    "profile/tools/bin/framegen-bootstrap.dll": "179640e435680638bed4ec497f6bb2a07aaf25cea180faaea173df93d03dd73e",
     "profile/tools/bin/framegen-vsov.dll": "25229f2263d6dfe2794e7140c8cdc6093e40c24f5fc840225b73e974db65cd22",
     "profile/framegen/models/openvino/rife_v2/rife_v4.26.onnx": "3a958289369a5645339b2fbd5f3a228bc82075866c2b4723e4ca485fda72fc6b",
     "profile/mpv.conf": "2eaadc0b11e8d13c0bb5236f8941060ee2f7a3f39960f99b99717b0df1a03887",
@@ -570,7 +561,7 @@
         "lib/libXv.so.1": "303809822a1f8b33dcc892506d24624e3651d4977f27233acd8c48a1d2eedc25",
         "lib/libz.so.1": "ecf002046edb58cb044ae85c663692c82814d92031505c18ef22ff997baf2d30",
         "lib/libzstd.so.1": "f1a0de1d83a75acaed7642f447e0108a037696a883f26f7296124f278c2346c2",
-        "libmpv.so.2": "081ed0695423b0dcb6c8bb276bdb64d407c9757372590f6fe2e7fedeb2688895",
+        "libmpv.so.2": "0c51ed0c4a62c222a64c1c8032e128499a8258e52ed1f0e8dcf763a844b5d79c",
         "licenses/deno-LICENSE.md": "f62497fffecc0852960c8d3e6934b9db86d16396e9b604072e923892cae3a588",
         "licenses/deno-node-LICENSE.txt": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
         "licenses/deno-undici-LICENSE.txt": "a6db8096b2707bc0102d256917d4d33f298ba36d8c3f25de067a2b5bb379db27",
@@ -663,9 +654,26 @@
         "licenses/yt-dlp-UNLICENSE.txt": "7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c",
         "licenses/zlib1g-amd64/copyright": "9e5b96d63773a5d177ba264254390f792be07e41748ebd94730981c6cac31cc6",
         "mpv": "11d5e5d0fb9e9347b948a0929dffdb575f19f0120e01f03718a047cc68b5c412",
-        "sources.json": "33b91e2404e50122fa49677e29287524206cf96f37fe3274985d90f911fc011c",
-        "yt-dlp": "767ba9dce7052aa196f8b12652f433d76de128ba168966fa84b6394d5e6c6795"
+        "sources.json": "dcabd17e30ebf55439e23919b954f85da3e26b7d423652093013487c38e31dc9",
+        "yt-dlp": "767ba9dce7052aa196f8b12652f433d76de128ba168966fa84b6394d5e6c6795",
+        "lib/libvapoursynth.so.4": "4977e405968ff4c7c7ce80753e9e139729f1d52581356809fbdde5c03f062c44",
+        "lib/libvapoursynthfilters.so": "bde2e88a2892a360d313229d215ca22db220d8a59ca4681da8f95162bbfab6ae",
+        "lib/libvapoursynthfilters_avx2.so": "935fe4cee0262ace1a084968c21027d4ee0c13fd43e075afc2c40ccc45bfbca5",
+        "lib/libvapoursynthfilters_zn4.so": "af60248b08cf1eb4d8adce118ed061b658ec6bd44aabf912233c566a2563a313",
+        "lib/libvstrt.so": "b69d593c2a54847fb3b7dd1ac6d6bd2d34c61cf4813091ee9bfb4220f526fac3",
+        "lib/libzimg.so.2": "187b838ad3b884ccbf64daae82bccbd0a0a5e8c3f8d87a5118b8069b189391f7",
+        "licenses/VapourSynth-LGPL-2.1.txt": "b634ab5640e258563c536e658cad87080553df6f34f62269a21d554844e58bfe",
+        "licenses/vs-mlrt-GPL-3.0.txt": "230184f60bae2feaf244f10a8bac053c8ff33a183bcc365b4d8b876d2b7f4809",
+        "licenses/zimg-copyright.txt": "b302dc2568943b3326d3be15d03fe968888d1673962891ea93050a2f41e6e609",
+        "licenses/TensorRT-headers-Apache-2.0.txt": "0f219bd1fa873d902c77fb971c0d0319c382aacbeb36c226b8b0b44ece2cd732",
+        "licenses/CUDA-EULA.txt": "72c22161fc1ebf242443d45158a7dd382d68597b00eeb7a7f539be5c6114be33",
+        "licenses/TensorRT-LICENSE.txt": "64bd290f0251405f783ba1d2e155c500542be69795e51147a1d9f11a57bda8cc"
       }
+    },
+    "sourceArchive": {
+      "url": "https://github.com/qbutt-org/qplay/releases/download/v1.4.0-sources/qplay-native-framegen-linux-runtime-sources.zip",
+      "sha256": "7002f1eca7803f7a215ca5af4442f5c2f9ddaadfc849692a3622d3b62d746038",
+      "size": 1001567191
     },
     "frozenTools": {
       "sources": [
@@ -741,6 +749,23 @@
           "configure": "--with-included-libunistring"
         }
       ]
+    },
+    "nativeFramegenFiles": {
+      "lib/libvapoursynth.so.4": 400864,
+      "lib/libvapoursynthfilters.so": 2163664,
+      "lib/libvapoursynthfilters_avx2.so": 2102224,
+      "lib/libvapoursynthfilters_zn4.so": 2167760,
+      "lib/libvstrt.so": 810776,
+      "lib/libzimg.so.2": 834777,
+      "licenses/VapourSynth-LGPL-2.1.txt": 26526,
+      "licenses/zimg-copyright.txt": 2721,
+      "licenses/CUDA-EULA.txt": 67876
     }
+  },
+  "vapourSynthApi": {
+    "version": "R79",
+    "source": "https://raw.githubusercontent.com/vapoursynth/vapoursynth/R79/include/VapourSynth4.h",
+    "path": "src/native/include/VapourSynth4.h",
+    "sha256": "62ca1cca248ee89d6f8a79c8f4172ccebca1ed6b69626c8d231d1be5df4ccecc"
   }
 }

@@ -24,18 +24,21 @@ Microsoft Visual C++ Runtime
   The Windows 10/11 Universal C Runtime remains an operating system component.
 
 mpv
-  Source: https://github.com/mpv-player/mpv/tree/b2c255c13e8e37952dbac6c34da56a690560378b
-  The public qbutt 1.3.0 runtime supplies this build with its frozen MSYS2
-  CLANG64 dependency closure. qplay retains these exact runtime binaries.
+  Embedded libmpv source:
+  https://github.com/qbutt-org/qbutt-mpv/tree/a20e9ef795cbc874adf877576705cd0a9d09b3c5
+  This build adds the native VapourSynth graph factory bridge. Its Windows
+  dependency closure retains the frozen MSYS2 CLANG64 runtime from qbutt 1.3.0.
   Copyright and GPL/LGPL texts accompany this notice.
   qplay embeds libmpv in its Rust/CXX-Qt process. The original mpv executable is
   also bundled for callers that discover it through --runtime-info-json.
-  The source archive pinned below preserves the custom build recipe, exact source
+  The retained command-line executable and baseline dependencies keep their
+  original source revisions, including the Linux command-line executable.
+  The source offers below preserve the custom build recipes, exact source
   inputs, original MSYS2 PKGBUILDs and patches, package BUILDINFO/PKGINFO, source
   archives, VCS trees and Cargo dependencies for the linked runtime and static
   libraries. Its manifests bind those inputs to the bundled binary closure.
-  upstream-lock.json pins that complete source archive by URL, size and SHA256.
-  BUILDING.txt in the archive describes the recorded toolchain and rebuild steps.
+  upstream-lock.json pins the complete source offers by URL, size and SHA256.
+  Their recipes and SDK metadata describe the recorded toolchains and rebuild steps.
   libplacebo by Niklas Haas and contributors is under LGPL version 2.1 or later;
   its pinned license is libplacebo-LGPL-2.1.txt.
 
@@ -74,9 +77,7 @@ Player interface and shaders
 
 qplay adaptations and corresponding sources
   https://github.com/qbutt-org/qplay maintains the native player, profile,
-  changed manager/bootstrap sources, Cargo locks, package recipes and notices.
-  The manager binary's SHA256 and first qplay revision are pinned separately
-  from the original qbutt profile snapshot in upstream-lock.json.
+  native Rust/C++ frame-generation sources, Cargo locks, build recipes and notices.
   The public qbutt snapshot and original profile provenance are recorded under
   importedFrom and importedProfileHashes in upstream-lock.json. Original imported
   hashes record that baseline; build-manifest.json binds each qplay package to
@@ -85,21 +86,23 @@ qplay adaptations and corresponding sources
   data only in its own data directory. No global mpv profile, registry environment
   variables or machine-local shader benchmark profile are installed.
 
-  The unchanged engine's complete corresponding sources and rebuild inputs are:
-  https://github.com/qbutt-org/qplay/releases/download/v1.0.0-sources/qplay-1.0.0-runtime-sources.zip
-  Size: 1432941010 bytes
-  SHA256: ed37bcf1f833e392ab5c71132e79de7efb27164c1611e0134ed0c6ce08718a4a
-  Its BUILDING.txt and manifests describe exact revisions, dependency closure,
-  binary/source mappings and the build commands. The qplay source distribution
-  supplements that immutable archive with all changed qplay code and recipes.
+  Windows runtime corresponding sources:
+  https://github.com/qbutt-org/qplay/releases/download/v1.4.0-sources/qplay-native-framegen-windows-runtime-sources.zip
+  Linux runtime corresponding sources:
+  https://github.com/qbutt-org/qplay/releases/download/v1.4.0-sources/qplay-native-framegen-linux-runtime-sources.zip
+  Exact archive sizes and hashes are pinned in upstream-lock.json and copied
+  into build-manifest.json. The offers preserve the original dependency source
+  exports together with the changed a20e9ef79 libmpv, native VapourSynth/plugin
+  sources and recorded build recipes. The qplay source distribution contains
+  the application changes and their build inputs.
 
 Frame generation
-  Manager and bootstrap sources, Cargo locks, build recipes and generated notices
-  are maintained under profile/tools in the qplay source distribution.
-  The compiled Rust notices and pinned standard-library notice accompany the
-  executables under engine/profile/tools/bin. Runtime-specific notices are copied
-  by the manager from profile/tools/framegen-manager/notices.
+  Native preparation and graph sources are in src/native. The TensorRT interface
+  headers retain provenance and licenses under src/native/vendor/tensorrt.
+  The exact VapourSynth interface header is pinned in upstream-lock.json and
+  retained at src/native/include/VapourSynth4.h. Runtime-specific notices are
+  maintained under licenses/framegen and copied by the native runtime preparer.
   The modified Intel VSOV plugin has complete source/build instructions and
   modification provenance under profile/tools/framegen-vsov.
   The Intel RIFE graph has provenance under profile/framegen/models/openvino.
-  Additional runtime downloads are individually pinned in the manager catalog.
+  Additional runtime downloads are individually pinned in the native asset catalog.

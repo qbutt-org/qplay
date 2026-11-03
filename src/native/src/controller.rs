@@ -25,6 +25,7 @@ mod startup;
 mod subtitles;
 mod update;
 
+pub use gpu::{GpuTask, run_gpu_task};
 pub use startup::{FrameWakeup, StartTask, Wakeup, frame_wakeup, run_start_task, wakeup};
 pub use subtitles::{SubtitleTask, run_subtitle_task};
 pub use update::{UpdateTask, run_update_task};
@@ -74,6 +75,8 @@ pub mod ffi {
         fn startUpdateTask(task: Box<UpdateTask>);
         #[rust_name = "start_subtitle_task"]
         fn startSubtitleTask(task: Box<SubtitleTask>);
+        #[rust_name = "start_gpu_task"]
+        fn startGpuTask(task: Box<GpuTask>);
         #[rust_name = "schedule_download_timeout"]
         fn scheduleDownloadTimeout(
             player: Pin<&mut PlayerController>,
@@ -94,6 +97,8 @@ pub mod ffi {
         fn run_update_task(task: Box<UpdateTask>);
         type SubtitleTask;
         fn run_subtitle_task(task: Box<SubtitleTask>);
+        type GpuTask;
+        fn run_gpu_task(task: Box<GpuTask>);
         type RenderLease;
         fn acquire_render_lease(player: &PlayerController) -> Result<Box<RenderLease>>;
         fn render_generation(self: &RenderLease) -> u64;

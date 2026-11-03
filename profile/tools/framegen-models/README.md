@@ -46,4 +46,4 @@ This internal motion scale is the only graph variant. Outer playback `process_sc
 
 No learned weights are changed: the rewrite preserves every source initializer and adds only 26 shape/grid constants plus the full-resolution flow, warp and blend graph.
 
-Practical-RIFE states that its linked trained models use the project MIT license. Exact repository copies are `tools/framegen-manager/notices/Practical-RIFE-MIT.txt` and `tools/framegen-manager/notices/vs-rife-MIT.txt`; the installed runtime keeps the same two filenames in its `notices` directory.
+Practical-RIFE states that its linked trained models use the project MIT license. Exact repository copies are `licenses/framegen/Practical-RIFE-MIT.txt` and `licenses/framegen/vs-rife-MIT.txt`; the installed runtime keeps the same two filenames in its `notices` directory.

@@ -6,12 +6,8 @@
 
 The prepared mpv profile keeps certificate and host-name verification enabled. `profile/certs/cacert.pem` is the pinned certifi Mozilla CA collection, used together with native Windows trust. Its source and license are recorded in `upstream-lock.json` and `licenses/`.
 
-`framegen-manager.exe` selects the available NVIDIA/TensorRT or Intel/OpenVINO backend and prepares its pinned runtime in qplay's data directory. Its source, Cargo lock, package recipe and runtime catalog are maintained under `profile/tools/framegen-manager`.
+Frame generation runs inside the native player. Rust in `src/native/src/gpu/` owns device selection, pinned downloads, verified native payloads and the per-device engine cache. Preparation runs on the existing Qt worker pool, with cancellation and generation checks. TensorRT builds engines through its native C++ API; the mpv native VapourSynth filter receives a typed configuration and constructs its graph directly through VSAPI.
 
-The native player keeps content detection, shader and frame-rate policy, quality monitoring and libmpv commands in `src/native/src/gpu/` and its controller. Its entry point sets `QPLAY_MEDIA_RUNTIME` to the `framegen` directory under player data, which both the manager and filter use. It starts the existing manager only when a compatible video needs an absent or damaged frame-generation runtime. That installer remains a bounded child in a kill-on-close Windows job; media changes cancel it. VapourSynth, vs-mlrt, `prepare.py` and `framegen.vpy` remain the model compilation and filter engine boundary. The native player does not embed the installer's download and archive stack.
+`framegen-vsov.dll` is the modified GPL-3.0 OpenVINO plugin. Corresponding source, build instructions, modification notice and dependency licenses are included under `profile/tools/framegen-vsov`. The Intel model and its reproducible rewrite remain under `profile/framegen/models/openvino` and `profile/tools/framegen-models`.
 
-`framegen-bootstrap.dll` is the mpv C plugin that validates the selected manager manifest and loads its portable VSScript into the running player. Its source and package recipe are under `profile/tools/framegen-bootstrap`.
-
-`framegen-vsov.dll` is the modified GPL-3.0 OpenVINO plugin. Corresponding source, build instructions, modification notice and dependency licenses are included under `profile/tools/framegen-vsov`.
-
-The manager and bootstrap third-party notices are generated from their exact Cargo locks. `Rust-Standard-Library-COPYRIGHT.html` records the licenses from their pinned Rust toolchain. The component package recipes check these notices and compiler identity before producing a binary.
+Frame-generation license notices are maintained under `licenses/framegen` and copied into the prepared runtime. `Rust-Standard-Library-COPYRIGHT.html` retains the supplied Rust standard-library notices.

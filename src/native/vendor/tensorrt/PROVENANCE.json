@@ -1,0 +1,5 @@
+{
+  "repository": "https://github.com/NVIDIA/TensorRT",
+  "revision": "d0faf303ba766f20cd9fd8c413a112fc2e5a397b",
+  "sourceBranchAtAcquisition": "release/10.16"
+}

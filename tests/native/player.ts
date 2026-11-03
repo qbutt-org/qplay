@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { copyFile, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { createReadStream } from "node:fs";
 import { delimiter, join, relative, resolve } from "node:path";
 
 const [buildDirectory, runtimeDirectory, mediaFile, qtDirectory, evidenceDirectory] = Bun.argv.slice(2);
@@ -70,12 +71,54 @@ if (timedOut || exitCode !== 0) {
 const evidence = JSON.parse(await readFile(`${evidencePrefix}.json`, "utf8"));
 const startupQa = Boolean(process.env.QPLAY_STARTUP_RENDER_QA);
 const extractorQa = Boolean(process.env.QPLAY_EXTRACTOR_ERROR_QA);
+const framegenQa = Boolean(process.env.QPLAY_NATIVE_FRAMEGEN_ACCEPTANCE);
 
 const digest = async (path: string) => createHash("sha256").update(await readFile(path)).digest("hex");
 let accepted: boolean;
 let renders: Record<string, string>;
 
-if (extractorQa) {
+if (framegenQa) {
+    accepted = evidence.framegenActive && evidence.framegenRenderedVideoChanged
+        && evidence.manualGpuChoicesPersisted && evidence.framegenRestoredAfterManualShader
+        && evidence.ownedChildren === 0;
+    renders = { framegenSha256: await digest(`${evidencePrefix}.framegen.png`) };
+    const probe = Bun.spawn([
+        resolve(runtimeDirectory, `engine/ffprobe${windows ? ".exe" : ""}`),
+        "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "json",
+        resolve(mediaFile),
+    ], { stdout: "pipe", stderr: "pipe", timeout: 15_000 });
+    const [source, probeError, probeExit] = await Promise.all([
+        new Response(probe.stdout).json(), new Response(probe.stderr).text(), probe.exited,
+    ]);
+    if (probeExit !== 0 || evidence.framegenOutputWidth !== source.streams?.[0]?.width
+        || evidence.framegenOutputHeight !== source.streams?.[0]?.height) {
+        throw new Error(`Native frame generation changed decoded geometry: ${probeError}`);
+    }
+    const lock = JSON.parse(await readFile(join(repository, "upstream-lock.json"), "utf8"));
+    const runtime = windows ? lock.runtime : lock.linux.runtime;
+    const enginePins = new Map(Object.entries(runtime.files)
+        .map(([path, hash]) => [windows ? path.toLowerCase() : path, hash]));
+    const enginePath = resolve(runtimeDirectory, "engine");
+    const engine = windows ? enginePath.toLowerCase() : enginePath;
+    if (!evidence.loadedLibraries?.length)
+        throw new Error("The native process did not report its loaded libraries.");
+    const libraries = [];
+    for (const path of evidence.loadedLibraries) {
+        const hash = createHash("sha256");
+        for await (const chunk of createReadStream(path)) hash.update(chunk);
+        const sha256 = hash.digest("hex");
+        const libraryPath = resolve(path);
+        const withinEngine = relative(engine, windows ? libraryPath.toLowerCase() : libraryPath);
+        if (!withinEngine.startsWith("..") && !withinEngine.includes(":")) {
+            const expected = enginePins.get(withinEngine.replaceAll("\\", "/"));
+            if (!expected || sha256 !== expected) {
+                throw new Error(`The loaded product engine dependency differs from its pin: ${path}`);
+            }
+        }
+        libraries.push({ path, sha256 });
+    }
+    evidence.loadedLibraries = libraries;
+} else if (extractorQa) {
     accepted = evidence.extractorReason && evidence.privateDataRedacted && evidence.boundedBytes <= 1024
         && evidence.errorSuccessNewError && evidence.newGenerationReason && evidence.ownedChildren === 0;
     renders = { errorFrameSha256: await digest(`${evidencePrefix}.error.png`) };

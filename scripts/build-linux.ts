@@ -158,6 +158,7 @@ try {
         buildSystem: "CMake, CXX-Qt and Rust", qtVersion,
         minimumGlibc: lock.linux.minimumGlibc,
         runtime: JSON.parse(await readFile(join(bundle, "engine/sources.json"), "utf8")),
+        correspondingSources: lock.linux.sourceArchive,
         files: inventory,
     };
     await writeFile(join(bundle, "build-manifest.json"), `${JSON.stringify(manifest, null, 4)}\n`);
@@ -167,6 +168,10 @@ try {
     const archive = join(output, "qplay-linux-x64.zip");
     await rm(archive, { force: true });
     await run(["zip", "-q", "-r", archive, "."], bundle);
+    const tarArchive = join(output, "qplay-linux-x64.tar.gz");
+    await rm(tarArchive, { force: true });
+    await run(["tar", "-czf", tarArchive, "."], bundle);
+    await run(["tar", "--compare", "--gzip", "--file", tarArchive], bundle);
     const publishedBundle = join(output, "portable");
     if (await Bun.file(join(publishedBundle, "build-manifest.json")).exists()) {
         const old = JSON.parse(await readFile(join(publishedBundle, "build-manifest.json"), "utf8"));
@@ -175,7 +180,11 @@ try {
         await rm(publishedBundle, { recursive: true });
     }
     await rename(bundle, publishedBundle);
-    console.log(JSON.stringify({ archive, sha256: await digest(archive), bundle: publishedBundle, files: Object.keys(inventory).length }, null, 4));
+    console.log(JSON.stringify({
+        archive, sha256: await digest(archive), size: Bun.file(archive).size,
+        tarArchive, tarSha256: await digest(tarArchive), tarSize: Bun.file(tarArchive).size,
+        bundle: publishedBundle, files: Object.keys(inventory).length,
+    }, null, 4));
 } finally {
     await rm(stage, { recursive: true, force: true });
 }

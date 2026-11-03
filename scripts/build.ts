@@ -75,14 +75,6 @@ for (const path of nativePaths) {
 const qtVersion = await outputOf([join(qtBin, "qtpaths6.exe"), "--qt-version"]);
 if (qtVersion !== lock.qt.version)
     throw new Error(`Qt ${qtVersion} differs from pinned ${lock.qt.version}.`);
-const manager = lock.nativeProfile.framegenManager;
-const managerSource = join(root, manager.path);
-if (await hash(managerSource) !== manager.sha256)
-    throw new Error("The frame generation manager differs from its native profile pin.");
-const committedManager = await outputOf(["git", "rev-parse", `${manager.binaryRevision}:${manager.path}`]);
-const bundledManager = await outputOf(["git", "hash-object", managerSource]);
-if (committedManager !== bundledManager)
-    throw new Error("The frame generation manager differs from its recorded binary revision.");
 await run(["cmake", "--build", nativeBuild, "--config", "Release", "--target", "qplay-native", "all_qmllint"]);
 const stage = await realpath(await mkdtemp(join(output, ".stage-")));
 
@@ -148,10 +140,6 @@ try {
         "certs/cacert.pem",
         "framegen",
         "shaders",
-        "tools/bin/framegen-manager.exe",
-        "tools/bin/framegen-manager-THIRD-PARTY-NOTICES.txt",
-        "tools/bin/framegen-bootstrap.dll",
-        "tools/bin/framegen-bootstrap-THIRD-PARTY-NOTICES.txt",
         "tools/bin/framegen-vsov.dll",
         "tools/bin/Rust-Standard-Library-COPYRIGHT.html",
     ]) {
@@ -230,7 +218,6 @@ try {
         qtVersion,
         compilerRuntime,
         runtimeArchive: { url: lock.runtime.url, sha256: lock.runtime.sha256, size: lock.runtime.size },
-        framegenManager: { sha256: manager.sha256, binaryRevision: manager.binaryRevision },
         correspondingSources: lock.sourceArchive,
         files: inventory
     };

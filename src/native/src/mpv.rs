@@ -115,6 +115,8 @@ pub struct Api {
     _library: Library,
     pub create: unsafe extern "C" fn() -> Handle,
     pub initialize: unsafe extern "C" fn(Handle) -> c_int,
+    pub register_framegen:
+        unsafe extern "C" fn(Handle, crate::framegen_graph::GraphFactory) -> c_int,
     pub terminate: unsafe extern "C" fn(Handle),
     pub option: unsafe extern "C" fn(Handle, *const c_char, *const c_char) -> c_int,
     option_node: unsafe extern "C" fn(Handle, *const c_char, c_int, *mut c_void) -> c_int,
@@ -177,6 +179,7 @@ impl Api {
         Ok(Self {
             create: symbol!("mpv_create"),
             initialize: symbol!("mpv_initialize"),
+            register_framegen: symbol!("mpv_qbutt_set_vapoursynth_graph_factory"),
             terminate: symbol!("mpv_terminate_destroy"),
             option: symbol!("mpv_set_option_string"),
             option_node: symbol!("mpv_set_option"),

@@ -52,7 +52,7 @@
     }
   },
   "notices": [
-    "../../../tools/framegen-manager/notices/Practical-RIFE-MIT.txt",
-    "../../../tools/framegen-manager/notices/vs-rife-MIT.txt"
+    "../../../../licenses/framegen/Practical-RIFE-MIT.txt",
+    "../../../../licenses/framegen/vs-rife-MIT.txt"
   ]
 }
