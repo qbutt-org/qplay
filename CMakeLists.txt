@@ -1,7 +1,10 @@
 cmake_minimum_required(VERSION 3.28)
 
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/qplay-version.txt" qplay_version)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS qplay-version.txt)
+
 project(qplay_native
-    VERSION 1.2.1
+    VERSION ${qplay_version}
     LANGUAGES CXX
 )
 
