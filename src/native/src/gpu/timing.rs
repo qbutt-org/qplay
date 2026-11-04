@@ -400,6 +400,8 @@ impl NetworkSource<'_> {
                 "protocol_whitelist",
                 "http,https,tcp,tls,crypto,data".into(),
             ),
+            // FFmpeg needs persistent-request handling to reopen bounded ranges at their end.
+            ("multiple_requests", "1".into()),
             ("request_size", request_size),
         ];
         for (name, value) in [

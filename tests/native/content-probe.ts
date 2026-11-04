@@ -47,7 +47,8 @@ async function classify(name: string, source: string, mode: string, expectedKind
     if (expectedKind) {
         assert.equal(result.kind, expectedKind, name);
         assert(result.confidence >= 0.55, name);
-        assert(Math.abs(result.fps - 24) < 0.001 && !result.variable, `${name}: timing changed`);
+        assert(Math.abs(result.fps - 24) < 0.001 && !result.variable,
+            `${name}: expected constant 24 fps, got ${result.fps} fps and variable=${result.variable}`);
     }
     results[name] = result;
     return result;
@@ -106,6 +107,7 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
         ranged: Boolean(match), bytes, userAgent: request.headers.get("user-agent") ?? "" });
     const headers: Record<string, string> = { "Content-Length": String(bytes), "Accept-Ranges": "bytes", ETag: `"legal-fixture-${file.size}"` };
     if (match) headers["Content-Range"] = `bytes ${start}-${end}/${file.size}`;
+    if (url.pathname.startsWith("/media/")) headers.Connection = "close";
     return new Response(request.method === "HEAD" ? null : file.slice(start, end + 1), { status: match ? 206 : 200, headers });
 } });
 try {
