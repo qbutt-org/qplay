@@ -87,8 +87,8 @@ QJsonObject exerciseContentPolicy(Qplay::PlayerController &backend, QOpenGLFrame
     QElapsedTimer cancellation;
     cancellation.start();
     open(remoteMovie);
+    wait([&] { return backend.effectiveShader() == QStringLiteral("fsr"); }, "Replacement movie did not apply its shader after cancellation");
     require(cancellation.elapsed() < 5000, "Cancelled classification delayed the replacement media");
-    require(backend.effectiveShader() == QStringLiteral("fsr"), "A retired anime result changed the new movie policy");
     backend.stop();
     drainProbe();
     return {
