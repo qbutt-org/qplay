@@ -9,6 +9,7 @@ use super::framegen::Rate;
 use super::process::run_bounded;
 
 const MAX_OUTPUT_BYTES: u64 = 8 * 1024 * 1024;
+pub(super) const NETWORK_TIMEOUT: Duration = Duration::from_secs(30);
 
 const SAMPLE_FRACTIONS: [f64; 4] = [0.12, 0.36, 0.62, 0.86];
 const FRAMES_PER_SAMPLE: usize = 48;
@@ -337,15 +338,81 @@ pub fn probe_local_timing(
     analyze(document)
 }
 
+#[derive(Clone, Copy)]
 pub struct NetworkSource<'a> {
     pub url: &'a str,
     pub video_stream: &'a str,
+    pub ca_file: &'a Path,
     pub headers: &'a [String],
     pub proxy: Option<&'a str>,
     pub user_agent: Option<&'a str>,
     pub referrer: Option<&'a str>,
     pub request_size: Option<u64>,
     pub cookies_in_use: bool,
+}
+
+impl NetworkSource<'_> {
+    pub(super) fn probe_options(self) -> Result<(String, Vec<(&'static str, String)>), String> {
+        if self.cookies_in_use || !self.headers.is_empty() {
+            return Err("The protected stream cannot be probed outside playback.".into());
+        }
+        for value in [Some(self.url), self.proxy, self.referrer]
+            .into_iter()
+            .flatten()
+            .filter(|value| !value.is_empty())
+        {
+            let url = reqwest::Url::parse(value)
+                .map_err(|_| "The network probe option is not a valid URL.")?;
+            if !url.username().is_empty() || url.password().is_some() {
+                return Err("The protected stream cannot be probed outside playback.".into());
+            }
+        }
+        let url = probe_url(self.url)?;
+        if self.video_stream.parse::<u32>().is_err()
+            && !self
+                .video_stream
+                .strip_prefix("v:")
+                .is_some_and(|index| index.parse::<u32>().is_ok())
+        {
+            return Err("The selected video stream has no FFmpeg selector.".into());
+        }
+        let request_size = self
+            .request_size
+            .filter(|size| *size > 0)
+            .unwrap_or(1024 * 1024)
+            .min(1024 * 1024)
+            .to_string();
+        let ca_file = self
+            .ca_file
+            .to_str()
+            .filter(|_| self.ca_file.is_file())
+            .ok_or("The bundled TLS certificates are unavailable for network analysis.")?;
+        let ca_file = if cfg!(windows) {
+            ca_file.replace('\\', "/")
+        } else {
+            ca_file.to_owned()
+        };
+        let mut options = vec![
+            ("rw_timeout", NETWORK_TIMEOUT.as_micros().to_string()),
+            ("tls_verify", "1".into()),
+            ("ca_file", ca_file),
+            (
+                "protocol_whitelist",
+                "http,https,tcp,tls,crypto,data".into(),
+            ),
+            ("request_size", request_size),
+        ];
+        for (name, value) in [
+            ("http_proxy", self.proxy),
+            ("user_agent", self.user_agent),
+            ("referer", self.referrer),
+        ] {
+            if let Some(value) = value.filter(|value| !value.is_empty()) {
+                options.push((name, value.to_owned()));
+            }
+        }
+        Ok((url, options))
+    }
 }
 
 fn probe_url(url: &str) -> Result<String, String> {
@@ -380,54 +447,34 @@ pub fn probe_network_timing(
     if !ffprobe.is_file() {
         return Err("Bundled FFprobe is required for network timing analysis.".into());
     }
-    if source.cookies_in_use || !source.headers.is_empty() {
-        return Err("The protected stream cannot be probed outside playback.".into());
+    let (url, options) = source.probe_options()?;
+    let mut args = vec!["-v".to_owned(), "error".to_owned()];
+    for (name, value) in options {
+        args.extend([format!("-{name}"), value]);
     }
-    let url = probe_url(source.url)?;
-    if source.video_stream.parse::<u32>().is_err()
-        && !source
-            .video_stream
-            .strip_prefix("v:")
-            .is_some_and(|index| index.parse::<u32>().is_ok())
-    {
-        return Err("The selected video stream has no FFmpeg selector.".into());
-    }
-
-    let timeout = Duration::from_secs(30);
-    let timeout_us = timeout.as_micros().to_string();
-    let request_size = source.request_size.map(|size| size.to_string());
-    let headers = (!source.headers.is_empty()).then(|| source.headers.join("\r\n") + "\r\n");
-    let mut args = vec!["-v", "error", "-rw_timeout", &timeout_us];
-    for (name, value) in [
-        ("-http_proxy", source.proxy),
-        ("-user_agent", source.user_agent),
-        ("-referer", source.referrer),
-        ("-headers", headers.as_deref()),
-        ("-request_size", request_size.as_deref()),
-    ] {
-        if let Some(value) = value.filter(|value| !value.is_empty()) {
-            args.extend([name, value]);
-        }
-    }
-    args.extend([
-        "-select_streams",
-        source.video_stream,
-        "-show_entries",
-        "stream=avg_frame_rate,r_frame_rate,time_base",
-        "-show_entries",
-        "packet=pts,dts",
-        "-read_intervals",
-        "%+#192",
-        "-of",
-        "json",
-        "--",
-        &url,
-    ]);
+    args.extend(
+        [
+            "-select_streams",
+            source.video_stream,
+            "-show_entries",
+            "stream=avg_frame_rate,r_frame_rate,time_base",
+            "-show_entries",
+            "packet=pts,dts",
+            "-read_intervals",
+            "%+#192",
+            "-of",
+            "json",
+            "--",
+            &url,
+        ]
+        .map(str::to_owned),
+    );
+    let arguments = args.iter().map(String::as_str).collect::<Vec<_>>();
     let bytes = run_bounded(
         ffprobe,
-        &args,
+        &arguments,
         cancel,
-        timeout,
+        NETWORK_TIMEOUT,
         MAX_OUTPUT_BYTES,
         None,
         None,

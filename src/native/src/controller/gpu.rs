@@ -15,7 +15,7 @@ use crate::gpu::framegen::{
     SessionQuality,
 };
 use crate::gpu::hardware::{self, HardwareProfile};
-use crate::gpu::probe::classify_file;
+use crate::gpu::probe::{classify_file, classify_network};
 use crate::gpu::runtime::{Runtime, RuntimeStore};
 use crate::gpu::shaders::{self, AutoOptions, ShaderChoice, ShaderPreset, ShaderQuality};
 use crate::gpu::timing::{self, Timing};
@@ -227,44 +227,59 @@ pub fn run_gpu_task(task: Box<GpuTask>) {
 }
 
 fn probe(input: ProbeInput, cancel: &AtomicBool, on_prepare: impl FnOnce()) -> ProbeResult {
-    let detected = input
-        .local
-        .as_ref()
-        .and_then(|path| {
-            classify_file(&input.ffprobe, path, input.duration, input.stream, cancel)
-                .ok()
-                .filter(|classification| classification.confidence >= 0.55)
-                .map(|classification| classification.kind)
-        })
-        .unwrap_or(ContentKind::Unknown);
-    let timing_result = if let Some(path) = input.local.as_ref() {
-        timing::probe_local_timing(&input.ffprobe, path, input.duration, input.stream, cancel)
+    let classify_content = input.content_choice == ContentChoice::Auto;
+    let (classification, timing_result) = if let Some(path) = input.local.as_ref() {
+        (
+            if classify_content {
+                classify_file(&input.ffprobe, path, input.duration, input.stream, cancel).ok()
+            } else {
+                None
+            },
+            timing::probe_local_timing(&input.ffprobe, path, input.duration, input.stream, cancel),
+        )
     } else if let Some(filename) = input.stream_filename.as_deref() {
-        timing::resolve_network_source(
+        match timing::resolve_network_source(
             filename,
             &input.stream_title,
             input.stream,
             input.ytdl_result.as_deref(),
-        )
-        .and_then(|resolved| {
-            timing::probe_network_timing(
-                &input.ffprobe,
-                timing::NetworkSource {
+        ) {
+            Ok(resolved) => {
+                let ca_file = input
+                    .engine_root
+                    .join(crate::runtime_info::CA_BUNDLE_RELATIVE);
+                let source = timing::NetworkSource {
                     url: &resolved.url,
                     video_stream: &resolved.video_stream,
+                    ca_file: &ca_file,
                     headers: &input.http_headers,
                     proxy: input.http_proxy.as_deref(),
                     user_agent: input.user_agent.as_deref(),
                     referrer: input.referrer.as_deref(),
                     request_size: input.request_size,
                     cookies_in_use: input.cookies_in_use,
-                },
-                cancel,
-            )
-        })
+                };
+                (
+                    if classify_content {
+                        classify_network(&input.ffprobe, source, input.duration, cancel).ok()
+                    } else {
+                        None
+                    },
+                    timing::probe_network_timing(&input.ffprobe, source, cancel),
+                )
+            }
+            Err(error) => (None, Err(error)),
+        }
     } else {
-        Err("The selected video source is unavailable for FPS analysis.".into())
+        (
+            None,
+            Err("The selected video source is unavailable for FPS analysis.".into()),
+        )
     };
+    let detected = classification
+        .filter(|classification| classification.confidence >= 0.55)
+        .map(|classification| classification.kind)
+        .unwrap_or(ContentKind::Unknown);
     let timing = timing_result.as_ref().ok().copied();
     let hardware = hardware::detect().ok();
     let wants_framegen = crate::gpu::runtime::SUPPORTED

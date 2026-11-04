@@ -102,6 +102,8 @@ target_link_libraries(qplay-native
 
 qt_add_executable(qplay-native-acceptance WIN32
     tests/native/player.cpp
+    tests/native/content.cpp
+    tests/native/content.h
     tests/native/downloads.cpp
     tests/native/downloads.h
     tests/native/framegen.cpp

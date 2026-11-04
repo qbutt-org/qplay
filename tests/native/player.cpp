@@ -37,6 +37,7 @@
 #include <QThreadPool>
 #include <QUrl>
 
+#include "content.h"
 #include "downloads.h"
 #include "framegen.h"
 #include "ipc.h"
@@ -444,6 +445,21 @@ int main(int argc, char *argv[])
             backend.initialize(library + QStringLiteral(".missing"), profile);
             backend.initialize(library, profile);
             wait([&] { return backend.engineReady(); }, "Initialize actual Rust/mpv session timed out");
+            if (qEnvironmentVariableIsSet("QPLAY_CONTENT_POLICY_QA"))
+            {
+                evidence = exerciseContentPolicy(backend, target, media, secondMedia, preferences, evidencePrefix, tick, wait);
+                root.reset();
+                gl.makeCurrent(&surface);
+                control.invalidate();
+                require(QThreadPool::globalInstance()->waitForDone(5000), "Content policy work did not drain");
+                require(childProcessCount() == 0, "A helper survived content classification");
+                evidence[QStringLiteral("ownedChildren")] = 0;
+                evidence[QStringLiteral("exitCode")] = 0;
+                QFile output(evidencePrefix + QStringLiteral(".json"));
+                require(output.open(QIODevice::WriteOnly), "Write content policy evidence failed");
+                output.write(QJsonDocument(evidence).toJson());
+                return 0;
+            }
             if (qEnvironmentVariableIsSet("QPLAY_NATIVE_FRAMEGEN_ACCEPTANCE"))
             {
                 evidence = exerciseFramegen(backend, target, secondMedia, preferences, evidencePrefix, tick, wait);

@@ -13,6 +13,7 @@ pub(crate) const VERSION: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../qplay-version.txt"
 ));
+pub(crate) const CA_BUNDLE_RELATIVE: &str = "profile/certs/cacert.pem";
 
 #[derive(Deserialize)]
 struct BuildManifest {

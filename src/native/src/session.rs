@@ -163,7 +163,7 @@ impl Session {
         let certificate = library
             .parent()
             .ok_or("The mpv library needs an engine directory.")?
-            .join("profile/certs/cacert.pem");
+            .join(crate::runtime_info::CA_BUNDLE_RELATIVE);
         let audio_delay = audio_delay.to_string();
         for (name, value) in [
             ("config", "no"),

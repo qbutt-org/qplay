@@ -8,6 +8,7 @@ use serde::Deserialize;
 
 use super::content::{Classification, StyleMetrics, classify};
 use super::process::run_bounded;
+use super::timing::{NETWORK_TIMEOUT, NetworkSource};
 
 const SAMPLE_FRACTIONS: [f64; 6] = [0.12, 0.27, 0.42, 0.57, 0.72, 0.87];
 const SAMPLE_FRAMES: usize = 12;
@@ -35,32 +36,53 @@ impl ProbeFrame {
     }
 }
 
-fn graph_path(path: &Path) -> Result<String, String> {
-    let path = path.to_str().ok_or("The video path is not valid UTF-8.")?;
-    if path.chars().any(|ch| matches!(ch, '\0' | '\r' | '\n')) {
-        return Err("The video path contains an invalid character.".into());
+fn graph_value(value: &str) -> Result<String, String> {
+    if value.chars().any(|ch| matches!(ch, '\0' | '\r' | '\n')) {
+        return Err("The video probe option contains an invalid character.".into());
     }
-    let path = path
-        .replace('\\', "/")
+    let value = value
+        .replace('\\', "\\\\")
         .replace(':', "\\:")
         .replace('\'', "'\\\\\\''");
-    Ok(format!("'{path}'"))
+    Ok(format!("'{value}'"))
 }
 
-fn filtergraph(path: &Path, duration: f64, stream: u32) -> Result<String, String> {
-    let path = graph_path(path)?;
+fn filtergraph(
+    source: &str,
+    duration: f64,
+    stream: &str,
+    options: &[(&str, String)],
+) -> Result<String, String> {
+    let source = graph_value(source)?;
+    let stream = graph_value(stream)?;
+    let format_options = if options.is_empty() {
+        String::new()
+    } else {
+        let dictionary = options
+            .iter()
+            .map(|(name, value)| {
+                let value = value
+                    .replace('\\', "\\\\")
+                    .replace(':', "\\:")
+                    .replace('\'', "\\'");
+                format!("{name}={value}")
+            })
+            .collect::<Vec<_>>()
+            .join(":");
+        format!(":format_opts={}", graph_value(&dictionary)?)
+    };
     let mut filters = Vec::with_capacity(SAMPLE_FRACTIONS.len() * 3);
     for (index, fraction) in SAMPLE_FRACTIONS.into_iter().enumerate() {
-        let mut source = String::new();
+        let mut sample = String::new();
         write!(
-            source,
-            "movie=filename={path}:stream_index={stream}:seek_point={:.3}:dec_threads=1,\
+            sample,
+            "movie=filename={source}:streams={stream}:seek_point={:.3}:dec_threads=1{format_options},\
              trim=end_frame={SAMPLE_FRAMES},setpts=PTS-STARTPTS,\
              scale=96:54:flags=area,split=2[base{index}][edge{index}]",
             duration * fraction,
         )
         .unwrap();
-        filters.push(source);
+        filters.push(sample);
     }
     for index in 0..SAMPLE_FRACTIONS.len() {
         filters.push(format!("[base{index}]signalstats,entropy[out{index}]"));
@@ -143,7 +165,36 @@ pub fn classify_file(
     if !ffprobe.is_file() || !video.is_file() || !duration.is_finite() || duration <= 0.0 {
         return Err("A local video and bundled FFprobe are required for style analysis.".into());
     }
-    let graph = filtergraph(video, duration, video_stream)?;
+    let source = video
+        .to_str()
+        .ok_or("The video path is not valid UTF-8.")?
+        .replace('\\', "/");
+    let graph = filtergraph(&source, duration, &video_stream.to_string(), &[])?;
+    classify_graph(ffprobe, &graph, cancel, Duration::from_secs(8))
+}
+
+/// Analyze the selected public/gateway representation without seeking playback.
+/// Protected standalone streams keep the shared network probe guard.
+pub fn classify_network(
+    ffprobe: &Path,
+    source: NetworkSource<'_>,
+    duration: f64,
+    cancel: &AtomicBool,
+) -> Result<Classification, String> {
+    if !ffprobe.is_file() || !duration.is_finite() || duration <= 0.0 {
+        return Err("A finite video and bundled FFprobe are required for style analysis.".into());
+    }
+    let (url, options) = source.probe_options()?;
+    let graph = filtergraph(&url, duration, source.video_stream, &options)?;
+    classify_graph(ffprobe, &graph, cancel, NETWORK_TIMEOUT)
+}
+
+fn classify_graph(
+    ffprobe: &Path,
+    graph: &str,
+    cancel: &AtomicBool,
+    timeout: Duration,
+) -> Result<Classification, String> {
     let bytes = run_bounded(
         ffprobe,
         &[
@@ -152,7 +203,7 @@ pub fn classify_file(
             "-f",
             "lavfi",
             "-i",
-            &graph,
+            graph,
             "-show_entries",
             "frame=stream_index:frame_tags=lavfi.signalstats.YDIF,lavfi.signalstats.SATAVG,\
              lavfi.signalstats.YHIGH,lavfi.signalstats.YAVG,lavfi.entropy.normalized_entropy.normal.Y",
@@ -160,7 +211,7 @@ pub fn classify_file(
             "json",
         ],
         cancel,
-        Duration::from_secs(8),
+        timeout,
         MAX_OUTPUT_BYTES,
         None,
         None,
