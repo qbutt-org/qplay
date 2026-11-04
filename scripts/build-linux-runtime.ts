@@ -87,6 +87,25 @@ const ffmpegArchive = await download(`ffmpeg-${pins.ffmpeg.version}.tar.gz`, pin
 const ffmpeg = join(source, `FFmpeg-${pins.ffmpeg.revision}`);
 if (!await Bun.file(join(ffmpeg, "configure")).exists())
     await run(["tar", "-xzf", ffmpegArchive, "-C", source]);
+
+// Backport FFmpeg's secure default to libavformat 62. Child requests, such as
+// HLS segments, can be opened without the parent input's explicit TLS options.
+const tlsHeader = join(ffmpeg, "libavformat/tls.h");
+const tlsHeaderHash = await digest(tlsHeader);
+const tlsPins = pins.ffmpeg.tlsDefault;
+if (tlsHeaderHash === tlsPins.upstreamSha256) {
+    const header = await readFile(tlsHeader, "utf8");
+    const secureHeader = header.replace(
+        "#if FF_API_NO_DEFAULT_TLS_VERIFY\n#define TLS_VERIFY_DEFAULT 0\n#else\n#define TLS_VERIFY_DEFAULT 1\n#endif",
+        "#define TLS_VERIFY_DEFAULT 1",
+    );
+    if (createHash("sha256").update(secureHeader).digest("hex") !== tlsPins.verifiedSha256)
+        throw new Error("FFmpeg TLS defaults differ from the audited change.");
+    await writeFile(tlsHeader, secureHeader);
+} else if (tlsHeaderHash !== tlsPins.verifiedSha256) {
+    throw new Error("The cached FFmpeg TLS header differs from its source pin.");
+}
+
 const ffmpegBuild = join(output, `build-ffmpeg-${pins.ffmpeg.version}`);
 await mkdir(ffmpegBuild, { recursive: true });
 const buildEnvironment = { PKG_CONFIG_PATH: `${prefix}/lib/pkgconfig${process.env.PKG_CONFIG_PATH ? `:${process.env.PKG_CONFIG_PATH}` : ""}` };

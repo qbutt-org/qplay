@@ -400,7 +400,11 @@
       "revision": "1041abdc962f4cc4f394aa8de9dc5236c0c3b9e7",
       "url": "https://codeload.github.com/FFmpeg/FFmpeg/tar.gz/1041abdc962f4cc4f394aa8de9dc5236c0c3b9e7",
       "sha256": "a406fe831cbb605f5fe50e43eb566e502ae63ff3b3206bfa744e4b31b8bb73ac",
-      "size": 16920205
+      "size": 16920205,
+      "tlsDefault": {
+        "upstreamSha256": "480647637d70870ace26b44c0fb7dcf0e2c53a62c55973f6137708106c666670",
+        "verifiedSha256": "03efdb49bc7ceb95c8ab9704ea0280a17d06fbcc8bf00dc65647b50069d70c3b"
+      }
     },
     "mpv": {
       "revision": "b2c255c13e8e37952dbac6c34da56a690560378b",
