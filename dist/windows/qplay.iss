@@ -159,7 +159,12 @@ begin
         Size := 32768;
         SetLength(ProcessPath, Size);
         if not QueryFullProcessImageName(Process, 0, ProcessPath, Size) then
+        begin
+            { A retained handle can keep an exited process open without an image name. }
+            if WaitForSingleObject(Process, 0) = 0 then
+                Result := '';
             Exit;
+        end;
         SetLength(ProcessPath, Size);
         if CompareText(ProcessPath, ExpandConstant('{app}\qplay.exe')) <> 0 then
             Exit;
