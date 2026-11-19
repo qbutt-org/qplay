@@ -75,16 +75,6 @@ impl Runtime {
         })
     }
 
-    fn library_dir(&self) -> PathBuf {
-        #[cfg(target_os = "linux")]
-        return self.version_dir.join("lib");
-        #[cfg(windows)]
-        self.version_dir.join(match self.backend() {
-            Backend::TensorRt => "plugins/vsmlrt-cuda",
-            Backend::OpenVino => "plugins/vsov",
-        })
-    }
-
     pub fn engine_path(&self) -> Result<&Path, String> {
         match self.backend() {
             Backend::TensorRt => self
@@ -117,7 +107,7 @@ impl Runtime {
         let target = self
             .engine_dir
             .join(format!("rife426-{width}x{height}.engine"));
-        let library_dir = self.library_dir();
+        let library_dir = self.version_dir.join(TRT_DIRECTORY);
         let library = library_dir
             .to_str()
             .ok_or("The TensorRT directory is not valid UTF-8.")?;
@@ -231,10 +221,7 @@ impl RuntimeStore {
         }
         let mut current = detected.clone();
         if runtime.backend() == Backend::OpenVino {
-            let name = device::resolve_openvino(
-                &runtime.library_dir().join("openvino_c.dll"),
-                &mut current,
-            )?;
+            let name = device::resolve_openvino(&runtime.version_dir, &mut current)?;
             if name != runtime.openvino_device {
                 return Ok(None);
             }
@@ -319,10 +306,7 @@ impl RuntimeStore {
             .map_err(|error| format!("Install GPU notices: {error}"))?;
         let mut device_binding = detected;
         let openvino_device = if backend == Backend::OpenVino {
-            device::resolve_openvino(
-                &stage.path.join("plugins/vsov/openvino_c.dll"),
-                &mut device_binding,
-            )?
+            device::resolve_openvino(&stage.path, &mut device_binding)?
         } else {
             String::new()
         };

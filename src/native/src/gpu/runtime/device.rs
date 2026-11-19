@@ -160,7 +160,10 @@ fn cuda() -> Result<Option<Device>, String> {
 
 #[cfg(windows)]
 pub fn discover() -> Result<Device, String> {
-    use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, DXGI_ERROR_NOT_FOUND, IDXGIFactory1};
+    use windows::Win32::Graphics::Dxgi::{
+        CreateDXGIFactory1, DXGI_ERROR_NOT_FOUND, IDXGIDevice, IDXGIFactory1,
+    };
+    use windows::core::Interface;
     if std::env::var_os("CUDA_VISIBLE_DEVICES").is_some() {
         return Err("CUDA_VISIBLE_DEVICES must be unset for native frame generation.".into());
     }
@@ -177,6 +180,9 @@ pub fn discover() -> Result<Device, String> {
         };
         let description = unsafe { adapter.GetDesc1() }.map_err(|error| error.to_string())?;
         if description.VendorId == 0x8086 && description.Flags & 2 == 0 {
+            let driver = unsafe { adapter.CheckInterfaceSupport(&IDXGIDevice::IID) }
+                .map_err(|error| format!("Read Intel GPU driver version: {error}"))?
+                as u64;
             let mut bytes = Vec::from(description.AdapterLuid.LowPart.to_le_bytes());
             bytes.extend_from_slice(&description.AdapterLuid.HighPart.to_le_bytes());
             let luid = bytes
@@ -187,7 +193,13 @@ pub fn discover() -> Result<Device, String> {
                 backend: "openvino".into(),
                 ordinal: 0,
                 gpu_id: String::new(),
-                driver_version: String::new(),
+                driver_version: format!(
+                    "{}.{}.{}.{}",
+                    driver >> 48,
+                    (driver >> 32) as u16,
+                    (driver >> 16) as u16,
+                    driver as u16
+                ),
                 capability: "intel-gpu".into(),
                 adapter_luid: Some(luid),
             });
@@ -210,16 +222,20 @@ pub fn discover() -> Result<Device, String> {
 }
 
 #[cfg(windows)]
-pub fn resolve_openvino(library: &std::path::Path, device: &mut Device) -> Result<String, String> {
+pub fn resolve_openvino(root: &std::path::Path, device: &mut Device) -> Result<String, String> {
+    use std::error::Error;
     use std::ffi::{CStr, CString, c_char, c_void};
     #[repr(C)]
     struct AvailableDevices {
         devices: *mut *mut c_char,
         size: usize,
     }
+    let path = root.join("plugins").join("vsov").join("openvino_c.dll");
     let library =
-        unsafe { libloading::os::windows::Library::load_with_flags(library, 0x100 | 0x1000) }
-            .map_err(|error| format!("Load native OpenVINO: {error}"))?;
+        unsafe { libloading::os::windows::Library::load_with_flags(&path, 0x100 | 0x1000) }
+            .map_err(|error| {
+                format!("Load openvino_c.dll: {}", error.source().unwrap_or(&error))
+            })?;
     unsafe {
         let create = library
             .get::<unsafe extern "C" fn(*mut *mut c_void) -> i32>(b"ov_core_create\0")
@@ -306,13 +322,12 @@ pub fn resolve_openvino(library: &std::path::Path, device: &mut Device) -> Resul
                 {
                     return Err("The Intel GPU identity is ambiguous or invalid.".into());
                 }
-                matched = Some((name, ordinal, uuid, prop(c"DRIVER_VERSION")?));
+                matched = Some((name, ordinal, uuid));
             }
-            let (name, ordinal, uuid, driver) =
+            let (name, ordinal, uuid) =
                 matched.ok_or("The selected Intel adapter is unavailable to OpenVINO.")?;
             device.ordinal = ordinal;
             device.gpu_id = format!("uuid:{uuid}");
-            device.driver_version = driver;
             Ok(name)
         })();
         free(core);
