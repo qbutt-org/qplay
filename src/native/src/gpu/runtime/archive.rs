@@ -11,6 +11,7 @@ pub fn obtain(
     cache: &Path,
     engine_root: &Path,
     cancel: &AtomicBool,
+    mut progress: impl FnMut(u64, u64),
 ) -> Result<PathBuf, String> {
     let (path, bytes) = match asset.source {
         AssetSource::Bundled {
@@ -47,6 +48,7 @@ pub fn obtain(
         .create_new(true)
         .open(&partial)
         .map_err(|error| format!("Stage GPU download: {error}"))?;
+    progress(0, bytes);
     let result = crate::files::run_network(
         cancel,
         crate::files::download_file(
@@ -55,7 +57,7 @@ pub fn obtain(
             bytes,
             asset.sha256,
             &mut output,
-            &mut |_, _| {},
+            &mut progress,
             asset.label,
         ),
     );

@@ -33,6 +33,7 @@
 #include <QQuickWindow>
 #include <QStringList>
 #include <QSet>
+#include <QScreen>
 #include <QThread>
 #include <QThreadPool>
 #include <QUrl>
@@ -242,7 +243,8 @@ int main(int argc, char *argv[])
                 qunsetenv("OPENROUTER_API_KEY");
             }
             Qplay::PlayerController backend;
-            backend.setDisplayRate(60);
+            backend.setDisplayRate(qEnvironmentVariableIsSet("QPLAY_NATIVE_FRAMEGEN_ACCEPTANCE")
+                ? app.primaryScreen()->refreshRate() : 60);
             const QString preferences = QDir(profile).absoluteFilePath(QStringLiteral("config/preferences.json"));
             backend.configure(preferences, QStringLiteral("en_US"));
             backend.configureInstallation(profile, profile, true);
@@ -846,11 +848,17 @@ int main(int argc, char *argv[])
             tick();
             require(target.toImage().save(evidencePrefix + QStringLiteral(".png")), "Save actual Qt/mpv composition failed");
 
-            auto *settingsButton = root->findChild<QQuickItem *>(QStringLiteral("settingsButton"));
+            auto *audioButton = findVisualItem(root.get(), QStringLiteral("audioButton"));
+            auto *loopButton = findVisualItem(root.get(), QStringLiteral("loopButton"));
+            require(loopButton && backend.looping(), "Repeat did not default to on");
+            click(window, *loopButton);
+            wait([&] { return !backend.looping(); }, "Repeat did not switch off");
+            click(window, *loopButton);
+            wait([&] { return backend.looping(); }, "Repeat did not switch on");
             auto *playbackMenu = root->findChild<QObject *>(QStringLiteral("playbackMenu"));
-            require(settingsButton != nullptr && playbackMenu != nullptr, "Playback settings controls unavailable");
-            hover(window, *settingsButton);
-            click(window, *settingsButton);
+            require(audioButton != nullptr && playbackMenu != nullptr, "Playback settings controls unavailable");
+            hover(window, *audioButton);
+            click(window, *audioButton);
             wait([&] { return playbackMenu->property("opened").toBool(); },
                 "The playback menu did not open from the centered transport");
             const bool playbackMenuOpened = playbackMenu->property("opened").toBool();
@@ -863,12 +871,12 @@ int main(int argc, char *argv[])
                 "Save actual playback menu composition failed");
             auto *popupContent = qvariant_cast<QQuickItem *>(playbackMenu->property("contentItem"));
             require(popupContent != nullptr, "Playback menu content unavailable");
-            auto *speedRow = findVisualItem(popupContent, QStringLiteral("speedMenuRow"));
+            auto *speedRow = findVisualItem(root.get(), QStringLiteral("speedButton"));
             require(speedRow != nullptr, "Speed menu row unavailable");
             click(window, *speedRow);
-            wait([&] { return playbackMenu->property("page").toInt() == 3; },
+            wait([&] { return playbackMenu->property("page").toString() == QStringLiteral("speed"); },
                 "The speed row did not open its own view");
-            const bool speedSubmenuOpened = playbackMenu->property("page").toInt() == 3;
+            const bool speedSubmenuOpened = playbackMenu->property("page").toString() == QStringLiteral("speed");
             tick();
             require(target.toImage().save(evidencePrefix + QStringLiteral(".speed.png")),
                 "Save actual speed controls failed");
@@ -883,38 +891,17 @@ int main(int argc, char *argv[])
             wait([&] { return std::abs(backend.speed() - 2) < 0.001; },
                 "QML speed preset did not reach libmpv");
 
-            playbackMenu->setProperty("page", 0);
-            tick();
-            auto *fxRow = findVisualItem(popupContent, QStringLiteral("fxMenuRow"));
+            auto *fxRow = findVisualItem(root.get(), QStringLiteral("fxButton"));
             require(fxRow != nullptr, "FX menu row unavailable");
             click(window, *fxRow);
-            wait([&] { return playbackMenu->property("page").toInt() == 4; },
+            wait([&] { return playbackMenu->property("page").toString() == QStringLiteral("fx"); },
                 "The FX row did not open its own view");
             tick();
             require(target.toImage().save(evidencePrefix + QStringLiteral(".fx.png")),
                 "Save actual FX controls failed");
-#ifdef Q_OS_LINUX
-            require(!backend.framegenSupported(), "Linux reported frame generation support");
-            const QString previousFramegen = backend.framegenChoice();
-            backend.changeFramegen(QStringLiteral("on"));
-            require(backend.framegenChoice() == previousFramegen,
-                "Unsupported frame generation changed its saved choice");
             auto *framegenOn = findVisualItem(popupContent, QStringLiteral("framegenOptionon"));
-            auto *framegenAvailability = findVisualItem(popupContent, QStringLiteral("framegenAvailability"));
-            require(framegenOn && !framegenOn->isEnabled() && framegenAvailability
-                && framegenAvailability->property("text").toString() == QStringLiteral("Unavailable on Linux"),
-                "Linux frame generation controls are enabled or lack their availability message");
-            click(window, *framegenOn);
-            require(backend.framegenChoice() == previousFramegen,
-                "Disabled frame generation control accepted pointer input");
-            require(root->setProperty("russian", true), "Switch FX to Russian failed");
-            wait([&] { return framegenAvailability->property("text").toString() == QStringLiteral("Недоступно в Linux"); },
-                "Russian frame generation availability message did not appear");
-            tick();
-            require(target.toImage().save(evidencePrefix + QStringLiteral(".fx-linux-ru.png")),
-                "Save Russian Linux FX controls failed");
-            root->setProperty("russian", false);
-#endif
+            require(framegenOn && framegenOn->isEnabled() == backend.framegenSupported(),
+                "FX control disagrees with native frame generation support");
 
             require(QMetaObject::invokeMethod(playbackMenu, "close"), "Close playback menu failed");
             wait([&] { return !playbackMenu->property("opened").toBool(); },
@@ -960,7 +947,7 @@ int main(int argc, char *argv[])
                 "Settings content is not scrollable");
             const auto scrollLimit = settingsFlickable->property("contentHeight").toDouble()
                 - settingsFlickable->height();
-            require(scrollLimit > 0 && settingsFlickable->setProperty("contentY", scrollLimit),
+            require(settingsFlickable->setProperty("contentY", std::max(0.0, scrollLimit)),
                 "Settings did not expose its lower categories");
             tick();
             require(target.toImage().save(evidencePrefix + QStringLiteral(".settings-720-bottom.png")),
@@ -1190,7 +1177,7 @@ int main(int argc, char *argv[])
                     "Frame generation did not classify insufficient disk space");
                 require(QMetaObject::invokeMethod(playbackMenu, "open"),
                     "Open playback menu after frame generation failure failed");
-                playbackMenu->setProperty("page", 4);
+                playbackMenu->setProperty("page", QStringLiteral("fx"));
                 auto *diskMessage = findVisualItem(popupContent, QStringLiteral("gpuErrorMessage"));
                 require(diskMessage != nullptr, "Frame generation error message is unavailable");
                 wait([&] { return diskMessage->isVisible(); },

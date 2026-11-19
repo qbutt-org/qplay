@@ -27,6 +27,8 @@ pub struct GpuState {
     pub detected: ContentKind,
     pub applied_shader: ShaderPreset,
     pub framegen_status: String,
+    pub component: &'static str,
+    pub progress: i32,
     pub error: String,
     pub quality: Option<SessionQuality>,
     pub selection: Option<Selection>,
@@ -55,6 +57,8 @@ impl Default for GpuState {
             framegen_choice: FramegenChoice::Auto,
             detected: ContentKind::Unknown,
             applied_shader: ShaderPreset::Off,
+            component: "",
+            progress: -1,
             framegen_status: "off".into(),
             error: String::new(),
             quality: None,
@@ -94,6 +98,8 @@ impl GpuState {
         self.timing = None;
         self.detected = ContentKind::Unknown;
         self.framegen_status = "off".into();
+        self.progress = -1;
+        self.component = "";
         self.error.clear();
     }
 }
@@ -195,10 +201,18 @@ pub fn run_gpu_task(task: Box<GpuTask>) {
         thread,
     } = *task;
     let progress_thread = thread.clone();
-    let result = probe(input, &cancel, || {
+    let mut previous = None;
+    let result = probe(input, &cancel, |stage, component, percent| {
+        if previous == Some((stage, component, percent)) {
+            return;
+        }
+        previous = Some((stage, component, percent));
         let _ = progress_thread.queue(move |mut player| {
             if player.gpu.generation == generation {
-                player.as_mut().rust_mut().gpu.framegen_status = "loading".into();
+                let gpu = &mut player.as_mut().rust_mut().gpu;
+                gpu.framegen_status = stage.into();
+                gpu.component = component;
+                gpu.progress = percent;
                 player.as_mut().state_changed();
             }
         });
@@ -219,6 +233,8 @@ pub fn run_gpu_task(task: Box<GpuTask>) {
             gpu.selection = result.selection;
             gpu.filter = result.filter;
             gpu.framegen_status = result.framegen_status;
+            gpu.progress = -1;
+            gpu.component = "";
             gpu.error = result.error.unwrap_or_default();
             gpu.cancel = None;
         }
@@ -226,7 +242,14 @@ pub fn run_gpu_task(task: Box<GpuTask>) {
     });
 }
 
-fn probe(input: ProbeInput, cancel: &AtomicBool, on_prepare: impl FnOnce()) -> ProbeResult {
+fn probe(
+    input: ProbeInput,
+    cancel: &AtomicBool,
+    mut progress: impl FnMut(&'static str, &'static str, i32) + Send,
+) -> ProbeResult {
+    if input.framegen_choice != FramegenChoice::Off {
+        progress("analyzing", "", -1);
+    }
     let classify_content = input.content_choice == ContentChoice::Auto;
     let (classification, timing_result) = if let Some(path) = input.local.as_ref() {
         (
@@ -306,9 +329,9 @@ fn probe(input: ProbeInput, cancel: &AtomicBool, on_prepare: impl FnOnce()) -> P
         }
     };
     let (mut runtime, mut error) = if wants_framegen && guard.is_none() {
-        on_prepare();
+        progress("checking", "", -1);
         let store = RuntimeStore::new(&input.engine_root, &input.runtime_root);
-        match store.prepare(cancel) {
+        match store.prepare(cancel, &mut progress) {
             Ok(runtime) => (Some(runtime), None),
             Err(error) => (None, Some(error)),
         }
@@ -340,7 +363,7 @@ fn probe(input: ProbeInput, cancel: &AtomicBool, on_prepare: impl FnOnce()) -> P
         ) {
             Ok(Some(chosen)) => {
                 match runtime
-                    .prepare_engine(input.width, input.height, cancel)
+                    .prepare_engine(input.width, input.height, cancel, &mut progress)
                     .and_then(|()| {
                         framegen::graph(
                             runtime,
@@ -885,6 +908,14 @@ impl ffi::PlayerController {
         let Some(choice) = FramegenChoice::from_id(&choice.to_string()) else {
             return;
         };
+        if choice == self.gpu.framegen_choice
+            && !matches!(
+                self.gpu.framegen_status.as_str(),
+                "error" | "unavailable" | "guarded"
+            )
+        {
+            return;
+        }
         let gpu = &mut self.as_mut().rust_mut().gpu;
         if choice != FramegenChoice::Off
             && matches!(gpu.shader_choice, ShaderChoice::Manual(preset) if preset != ShaderPreset::Fsr)

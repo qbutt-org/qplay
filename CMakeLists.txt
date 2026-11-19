@@ -68,6 +68,11 @@ qt_add_qml_module(qplay_views
         assets/icons/chevron-down.svg
         assets/icons/chevron-left.svg
         assets/icons/chevron-right.svg
+        assets/icons/file-video.svg
+        assets/icons/repeat.svg
+        assets/icons/audio-tracks.svg
+        assets/icons/subtitles.svg
+        assets/icons/reset.svg
         assets/icons/folder-open.svg
         assets/icons/link.svg
         assets/icons/maximize.svg

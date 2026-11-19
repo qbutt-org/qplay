@@ -16,13 +16,18 @@ impl ExclusiveFileLock {
 
     /// Preparation workers wait for a canceled predecessor to finish native
     /// teardown. Graph construction remains nonblocking through `acquire`.
-    pub fn wait(path: &Path, cancel: &AtomicBool) -> Result<Self, String> {
+    pub fn wait(
+        path: &Path,
+        cancel: &AtomicBool,
+        mut on_wait: impl FnMut(),
+    ) -> Result<Self, String> {
         loop {
             super::check_cancel(cancel)?;
             if let Some(lock) = Self::try_acquire(path)? {
                 super::check_cancel(cancel)?;
                 return Ok(lock);
             }
+            on_wait();
             std::thread::sleep(Duration::from_millis(100));
         }
     }

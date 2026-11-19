@@ -78,6 +78,11 @@ impl ffi::PlayerController {
         }
     }
 
+    pub(super) fn toggle_loop(mut self: Pin<&mut Self>) {
+        self.as_mut()
+            .dispatch(&["cycle-values", "loop-file", "inf", "no"]);
+    }
+
     pub(super) fn toggle_pause(mut self: Pin<&mut Self>) {
         if self.media_loaded() {
             self.as_mut().dispatch(&["cycle", "pause"]);
@@ -90,9 +95,6 @@ impl ffi::PlayerController {
                 self.as_mut().cancel_subtitle_job();
                 self.as_mut().restore_original_subtitles();
                 self.as_mut().rust_mut().position = position;
-            }
-            if let Some(quality) = self.as_mut().rust_mut().gpu.quality.as_mut() {
-                quality.filter_changed();
             }
             self.as_mut()
                 .dispatch(&["seek", &position.to_string(), "absolute+exact"]);

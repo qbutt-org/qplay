@@ -142,16 +142,37 @@ public:
     {
     }
 
-    void phaseStart(const char *, const char *, int32_t) noexcept override {}
-    void phaseFinish(const char *) noexcept override {}
-
-    bool stepComplete(const char *, int32_t) noexcept override
+    void phaseStart(const char *name, const char *parent, int32_t steps) noexcept override
     {
+        if (!parent)
+        {
+            std::lock_guard guard {m_mutex};
+            m_phase = name;
+            m_steps = steps;
+            engine_build_progress(m_control, 0);
+        }
+    }
+
+    void phaseFinish(const char *name) noexcept override
+    {
+        std::lock_guard guard {m_mutex};
+        if (m_phase == name)
+            m_phase.clear();
+    }
+
+    bool stepComplete(const char *name, int32_t step) noexcept override
+    {
+        std::lock_guard guard {m_mutex};
+        if (m_phase == name && m_steps > 0)
+            engine_build_progress(m_control, static_cast<int>(100LL * (step + 1) / m_steps));
         return !engine_build_cancelled(m_control);
     }
 
 private:
     const BuildControl &m_control;
+    std::mutex m_mutex;
+    std::string m_phase;
+    int32_t m_steps = 0;
 };
 
 std::filesystem::path path(rust::Str value)

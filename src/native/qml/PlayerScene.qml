@@ -12,7 +12,7 @@ Item {
     property bool settingsOpen: false
     property bool transportVisible: true
     readonly property string iconRoot: "qrc:/qt/qml/Qplay/Views/assets/icons/"
-    readonly property bool controlsShown: backend.state !== Playback.Playing || transportVisible || settingsOpen || openMenu.opened || playbackMenu.opened || topHover.hovered || bottomHover.hovered
+    readonly property bool controlsShown: backend.state !== Playback.Playing || transportVisible || settingsOpen || playbackMenu.visible || topHover.hovered || bottomHover.hovered
     readonly property int positionSeconds: Math.floor(backend.position)
     readonly property int durationSeconds: Math.floor(backend.duration)
 
@@ -47,14 +47,17 @@ Item {
         }
     }
 
-    MouseArea {
-        anchors.fill: parent
-        hoverEnabled: true
-        acceptedButtons: root.backend.mediaLoaded ? Qt.LeftButton : Qt.NoButton
+    HoverHandler {
+        id: videoHover
         cursorShape: root.controlsShown ? Qt.ArrowCursor : Qt.BlankCursor
-        onEntered: root.revealControls()
-        onPositionChanged: root.revealControls()
-        onClicked: root.backend.togglePause()
+        onPointChanged: root.revealControls()
+    }
+
+    TapHandler {
+        enabled: root.backend.mediaLoaded
+        exclusiveSignals: TapHandler.SingleTap | TapHandler.DoubleTap
+        onSingleTapped: root.backend.togglePause()
+        onDoubleTapped: root.fullscreenRequested()
     }
 
     TextMetrics {
@@ -66,7 +69,7 @@ Item {
 
     Item {
         id: subtitleDrag
-        visible: root.backend.subtitleText.length > 0 && !root.settingsOpen && !openMenu.opened && !playbackMenu.opened
+        visible: root.backend.subtitleText.length > 0 && !root.settingsOpen && !playbackMenu.visible
         width: Math.min(root.width - 48, Math.max(80, subtitleMeasure.advanceWidth + 36))
         height: subtitleMeasure.height * Math.min(4, root.backend.subtitleText.split("\n").length) + 16
         x: (root.width - width) / 2
@@ -111,7 +114,16 @@ Item {
             }
             onClicked: {
                 if (!dragged)
-                    root.backend.togglePause();
+                    subtitleClick.restart();
+            }
+            onDoubleClicked: {
+                subtitleClick.stop();
+                root.fullscreenRequested();
+            }
+            Timer {
+                id: subtitleClick
+                interval: Application.styleHints.mouseDoubleClickInterval
+                onTriggered: root.backend.togglePause()
             }
         }
     }
@@ -119,7 +131,7 @@ Item {
     Timer {
         id: hideTimer
         interval: 2200
-        running: root.transportVisible && root.backend.state === Playback.Playing && !root.settingsOpen && !openMenu.opened && !playbackMenu.opened && !topHover.hovered && !bottomHover.hovered
+        running: root.transportVisible && root.backend.state === Playback.Playing && !root.settingsOpen && !playbackMenu.visible && !topHover.hovered && !bottomHover.hovered
         onTriggered: root.transportVisible = false
     }
 
@@ -189,7 +201,7 @@ Item {
         id: topOverlay
         anchors.top: parent.top
         width: parent.width
-        height: 156
+        height: 100
         opacity: root.controlsShown ? 1 : 0
         enabled: opacity > 0.01
         Behavior on opacity {
@@ -235,10 +247,23 @@ Item {
                 font.weight: Font.DemiBold
             }
             PlayerIconButton {
-                objectName: "openMenuButton"
+                objectName: "openFileButton"
+                iconSource: root.iconRoot + "file-video.svg"
+                hint: root.russian ? qsTr("Открыть видео (Ctrl+O)") : qsTr("Open video (Ctrl+O)")
+                onClicked: root.openFileRequested()
+            }
+            PlayerIconButton {
+                objectName: "openLinkButton"
+                iconSource: root.iconRoot + "link.svg"
+                hint: root.russian ? qsTr("Открыть ссылку (Ctrl+L)") : qsTr("Open link (Ctrl+L)")
+                onClicked: root.openLinkRequested()
+            }
+            PlayerIconButton {
+                objectName: "openFolderButton"
+                visible: root.backend.mediaFolder.length > 0
                 iconSource: root.iconRoot + "folder-open.svg"
-                hint: root.russian ? qsTr("Открыть") : qsTr("Open")
-                onClicked: openMenu.open()
+                hint: root.russian ? qsTr("Открыть папку с видео") : qsTr("Open video folder")
+                onClicked: Qt.openUrlExternally(root.backend.mediaFolder)
             }
         }
     }
@@ -247,7 +272,7 @@ Item {
         id: bottomOverlay
         anchors.bottom: parent.bottom
         width: parent.width
-        height: 205
+        height: 136
         opacity: root.controlsShown ? 1 : 0
         enabled: opacity > 0.01
         Behavior on opacity {
@@ -357,11 +382,30 @@ Item {
                 RowLayout {
                     anchors.left: parent.left
                     anchors.verticalCenter: parent.verticalCenter
-                    visible: root.backend.downloadState !== "unavailable"
                     spacing: 4
 
+                    Repeater {
+                        model: [
+                            { page: "audio", icon: "audio-tracks.svg", label: root.russian ? qsTr("Аудиодорожка") : qsTr("Audio track") },
+                            { page: "subs", icon: "subtitles.svg", label: root.russian ? qsTr("Субтитры") : qsTr("Subtitles") },
+                            { page: "speed", icon: "", label: root.russian ? qsTr("Скорость") : qsTr("Speed") },
+                            { page: "fx", icon: "", label: "FX" }
+                        ]
+                        delegate: PlayerIconButton {
+                            id: menuButton
+                            required property var modelData
+                            objectName: modelData.page + "Button"
+                            iconSource: modelData.icon ? root.iconRoot + modelData.icon : ""
+                            text: modelData.page === "speed" ? Number(root.backend.speed.toFixed(2)) + "×"
+                                  : modelData.page === "fx" ? "FX" : ""
+                            active: playbackMenu.visible && playbackMenu.page === modelData.page
+                            hint: modelData.label
+                            onClicked: playbackMenu.showFor(menuButton, modelData.page)
+                        }
+                    }
                     PlayerIconButton {
                         objectName: "downloadButton"
+                        visible: root.backend.downloadState !== "unavailable"
                         iconSource: root.iconRoot + (root.backend.downloadState === "queued" ? "check.svg" : "download.svg")
                         enabled: root.backend.downloadState === "ready" || root.backend.downloadState === "failed"
                         hint: root.backend.downloadState === "pending"
@@ -424,6 +468,15 @@ Item {
                     spacing: 4
 
                     PlayerIconButton {
+                        objectName: "loopButton"
+                        iconSource: root.iconRoot + "repeat.svg"
+                        active: root.backend.looping
+                        enabled: root.backend.mediaLoaded
+                        hint: root.backend.looping ? (root.russian ? qsTr("Выключить повтор") : qsTr("Turn repeat off"))
+                                                   : (root.russian ? qsTr("Включить повтор") : qsTr("Turn repeat on"))
+                        onClicked: root.backend.toggleLoop()
+                    }
+                    PlayerIconButton {
                         objectName: "muteButton"
                         iconSource: root.iconRoot + (root.backend.muted ? "volume-off.svg" : "volume.svg")
                         enabled: root.backend.engineReady
@@ -434,7 +487,7 @@ Item {
                     Slider {
                         id: volumeSlider
                         objectName: "volumeSlider"
-                        Layout.preferredWidth: 96
+                        Layout.preferredWidth: root.width < 900 ? 58 : 96
                         implicitHeight: 44
                         from: 0
                         to: 100
@@ -473,8 +526,8 @@ Item {
                     PlayerIconButton {
                         objectName: "settingsButton"
                         iconSource: root.iconRoot + "settings.svg"
-                        hint: root.russian ? qsTr("Параметры воспроизведения") : qsTr("Playback settings")
-                        onClicked: playbackMenu.open()
+                        hint: root.russian ? qsTr("Настройки") : qsTr("Settings")
+                        onClicked: root.settingsRequested()
                     }
                     PlayerIconButton {
                         objectName: "fullscreenButton"
@@ -487,122 +540,32 @@ Item {
         }
     }
 
-    Popup {
-        id: openMenu
-        objectName: "openMenu"
-        parent: Overlay.overlay
-        x: parent.width - width - 66
-        y: 74
-        width: 248
-        padding: 8
-        modal: false
-        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-
-        background: Rectangle {
-            radius: 12
-            color: "#d83d3f42"
-            border.color: "#80ffffff"
-        }
-
-        contentItem: Column {
-            spacing: 2
-
-            ItemDelegate {
-                id: fileItem
-                width: parent.width
-                implicitHeight: 44
-                Accessible.name: root.russian ? qsTr("Открыть файл") : qsTr("Open file")
-                onClicked: {
-                    openMenu.close();
-                    root.openFileRequested();
-                }
-                background: Rectangle {
-                    radius: 7
-                    color: fileItem.hovered ? "#343638" : "transparent"
-                }
-                contentItem: RowLayout {
-                    spacing: 12
-                    Image {
-                        source: root.iconRoot + "folder-open.svg"
-                        sourceSize: Qt.size(20, 20)
-                        Layout.preferredWidth: 20
-                        Layout.preferredHeight: 20
-                    }
-                    Label {
-                        Layout.fillWidth: true
-                        text: root.russian ? qsTr("Открыть файл") : qsTr("Open file")
-                        color: "#ffffff"
-                    }
-                    Label {
-                        text: "Ctrl+O"
-                        color: "#a9bacb"
-                        font.pixelSize: 12
-                    }
-                }
-            }
-
-            ItemDelegate {
-                id: linkItem
-                width: parent.width
-                implicitHeight: 44
-                Accessible.name: root.russian ? qsTr("Открыть ссылку") : qsTr("Open link")
-                onClicked: {
-                    openMenu.close();
-                    root.openLinkRequested();
-                }
-                background: Rectangle {
-                    radius: 7
-                    color: linkItem.hovered ? "#343638" : "transparent"
-                }
-                contentItem: RowLayout {
-                    spacing: 12
-                    Image {
-                        source: root.iconRoot + "link.svg"
-                        sourceSize: Qt.size(20, 20)
-                        Layout.preferredWidth: 20
-                        Layout.preferredHeight: 20
-                    }
-                    Label {
-                        Layout.fillWidth: true
-                        text: root.russian ? qsTr("Открыть ссылку") : qsTr("Open link")
-                        color: "#ffffff"
-                    }
-                    Label {
-                        text: "Ctrl+L"
-                        color: "#a9bacb"
-                        font.pixelSize: 12
-                    }
-                }
-            }
-        }
-    }
-
     PlaybackMenu {
         id: playbackMenu
         backend: root.backend
         host: root
         russian: root.russian
-        onAdvancedRequested: root.settingsRequested()
+
     }
 
     Shortcut {
         sequence: "Space"
-        enabled: root.visible && !root.settingsOpen && !openMenu.opened && !playbackMenu.opened && root.backend.mediaLoaded
+        enabled: root.visible && !root.settingsOpen && !playbackMenu.visible && root.backend.mediaLoaded
         onActivated: root.backend.togglePause()
     }
     Shortcut {
         sequence: "Right"
-        enabled: root.visible && !root.settingsOpen && !openMenu.opened && !playbackMenu.opened && root.backend.mediaLoaded
+        enabled: root.visible && !root.settingsOpen && !playbackMenu.visible && root.backend.mediaLoaded
         onActivated: root.backend.seek(root.backend.position + 5)
     }
     Shortcut {
         sequence: "Left"
-        enabled: root.visible && !root.settingsOpen && !openMenu.opened && !playbackMenu.opened && root.backend.mediaLoaded
+        enabled: root.visible && !root.settingsOpen && !playbackMenu.visible && root.backend.mediaLoaded
         onActivated: root.backend.seek(Math.max(0, root.backend.position - 5))
     }
     Shortcut {
         sequence: "F"
-        enabled: !root.settingsOpen && !openMenu.opened && !playbackMenu.opened
+        enabled: !root.settingsOpen && !playbackMenu.visible
         onActivated: root.fullscreenRequested()
     }
 }

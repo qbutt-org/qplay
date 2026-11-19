@@ -79,15 +79,18 @@ QJsonObject exerciseFramegen(Qplay::PlayerController &backend, QOpenGLFramebuffe
         QElapsedTimer timer;
         timer.start();
         QString previousStatus;
+        int previousProgress = -1;
         while (!condition() && timer.elapsed() < timeout)
         {
             tick();
             const auto status = backend.framegenStatus();
-            if (status != previousStatus)
+            const int progress = backend.framegen_progress();
+            if ((status != previousStatus) || (progress / 10 != previousProgress / 10))
             {
-                std::fprintf(stderr, "Frame generation: %s\n", status.toUtf8().constData());
+                std::fprintf(stderr, "Frame generation: %s (%d)\n", status.toUtf8().constData(), progress);
                 std::fflush(stderr);
                 previousStatus = status;
+                previousProgress = progress;
             }
             if (!backend.gpuError().isEmpty())
                 throw std::runtime_error(backend.gpuError().toStdString());
@@ -103,29 +106,48 @@ QJsonObject exerciseFramegen(Qplay::PlayerController &backend, QOpenGLFramebuffe
     backend.changeFramegen(QStringLiteral("on"));
     backend.openMedia(secondMedia);
     wait([&] { return backend.mediaLoaded(); }, "Frame generation video did not load");
-    if (!backend.paused())
-        backend.togglePause();
-    wait([&] { return backend.paused(); }, "Pause before graph preparation failed");
-    waitGpu([&] { return backend.framegenStatus() == QStringLiteral("starting")
-        || backend.framegenStatus() == QStringLiteral("active"); }, 30 * 60 * 1000,
-        "Frame generation graph preparation timed out");
+    require(backend.looping(), "Short clips must repeat while GPU preparation runs");
     if (backend.paused())
         backend.togglePause();
     waitGpu([&] { return backend.framegenStatus() == QStringLiteral("active"); },
-        2 * 60 * 1000, "Frame generation output was not verified");
+        30 * 60 * 1000, "Frame generation output was not verified");
     require(backend.gpuError().isEmpty(), "Frame generation returned an error");
     tick();
     const QImage firstVideo = target.toImage().copy(0, 88, 1280, 500);
-    const double firstPosition = backend.position();
+    double previous = backend.position();
+    double playbackAdvance = 0;
+    int wraps = 0;
+    bool videoChanged = false;
+    double nextFrameSample = 1.0;
     QElapsedTimer playback;
     playback.start();
-    while (playback.elapsed() < 5000)
+    const bool shortClip = backend.duration() > 0 && backend.duration() < 12;
+    const int interval = shortClip ? 18000 : 5000;
+    while (playback.elapsed() < interval)
+    {
         tick();
-    const double playbackAdvance = backend.position() - firstPosition;
-    require(playbackAdvance >= 4.0 && backend.framegenStatus() == QStringLiteral("active"),
+        const double position = backend.position();
+        if (previous - position > backend.duration() / 2)
+        {
+            ++wraps;
+            playbackAdvance += backend.duration() - previous + position;
+        }
+        else
+            playbackAdvance += position - previous;
+        previous = position;
+        if (!videoChanged && playbackAdvance >= nextFrameSample)
+        {
+            videoChanged = target.toImage().copy(0, 88, 1280, 500) != firstVideo;
+            nextFrameSample = playbackAdvance + 1.0;
+        }
+    }
+    std::fprintf(stderr, "Playback %.2f s, %d loops, status %s, output %.2f fps\n",
+        playbackAdvance, wraps, backend.framegenStatus().toUtf8().constData(), backend.framegenObservation().measured_fps);
+    require(!shortClip || wraps >= 1, "Short clip did not loop with frame generation");
+    evidence[QStringLiteral("completedLoops")] = wraps;
+    require(playbackAdvance >= interval * 0.0008 && backend.framegenStatus() == QStringLiteral("active"),
         "Frame generation did not sustain real-time playback");
-    require(target.toImage().copy(0, 88, 1280, 500) != firstVideo,
-        "Frame generation did not render changing video");
+    require(videoChanged, "Frame generation did not render changing video");
     const auto observation = backend.framegenObservation();
     require(observation.source_fps > 0 && observation.target_fps > observation.source_fps,
         "Frame generation did not increase the source frame rate");

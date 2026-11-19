@@ -9,9 +9,11 @@ ApplicationWindow {
     readonly property bool russian: backend.language === "ru"
     readonly property bool dark: backend.appearance === "dark" || (backend.appearance === "system" && Application.styleHints.colorScheme === Qt.Dark)
 
+    property int previousVisibility: Window.Windowed
+
     visible: true
-    width: 1280
-    height: 720
+    width: Math.min(1280, Screen.desktopAvailableWidth - 32)
+    height: Math.min(720, Screen.desktopAvailableHeight - 56)
     minimumWidth: 800
     minimumHeight: 500
     title: backend.title.length ? backend.title + " - qplay" : "qplay"
@@ -30,11 +32,18 @@ ApplicationWindow {
         anchors.fill: parent
         backend: root.backend
         russian: root.russian
-        settingsOpen: settingsPanel.opened
+        settingsOpen: settingsPanel.visible
         onOpenFileRequested: fileDialog.open()
         onOpenLinkRequested: linkDialog.open()
         onSettingsRequested: settingsPanel.open()
-        onFullscreenRequested: root.visibility = root.visibility === Window.FullScreen ? Window.Windowed : Window.FullScreen
+        onFullscreenRequested: {
+            if (root.visibility === Window.FullScreen) {
+                root.visibility = root.previousVisibility;
+            } else {
+                root.previousVisibility = root.visibility;
+                root.showFullScreen();
+            }
+        }
     }
 
     SettingsPanel {

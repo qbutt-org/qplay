@@ -1,7 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import Qplay.Player
 
@@ -14,30 +14,69 @@ Popup {
     property bool dark: true
     readonly property string iconRoot: "qrc:/qt/qml/Qplay/Views/assets/icons/"
 
-    readonly property color surface: dark ? "#e33d3f42" : "#e9f4f5f6"
-    readonly property color textColor: dark ? "#f2f6fb" : "#192433"
-    readonly property color mutedColor: dark ? "#c1cedc" : "#35465a"
-    readonly property color optionColor: dark ? "#343638" : "#e9eef4"
-    readonly property int topOffset: 76
+    readonly property color surface: dark ? "#191d22" : "#f8f9fb"
+    readonly property color textColor: dark ? "#f2f5f9" : "#18232c"
+    readonly property color mutedColor: dark ? "#aab7c3" : "#4a5a66"
+    readonly property color optionColor: dark ? "#292f36" : "#e7ecf0"
 
     parent: host
-    x: root.host ? root.host.width - width - 22 : 0
-    y: root.topOffset
-    width: root.host ? Math.min(344, root.host.width - 32) : 0
-    height: root.host ? Math.min(settingsBody.implicitHeight + topPadding + bottomPadding, root.host.height - root.topOffset - 20) : 0
-    padding: 20
+    x: host.width - width
+    width: Math.min(365, host.width)
+    height: host.height
+    padding: 22
     modal: true
     dim: true
+    focus: true
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
     onOpened: root.backend.loadSubtitleModels()
-
-    Overlay.modal: Rectangle {
-        color: "#59000000"
+    enter: Transition {
+        NumberAnimation { property: "x"; from: root.host.width; to: root.host.width - root.width; duration: 180; easing.type: Easing.OutCubic }
     }
-    background: Rectangle {
-        radius: 14
-        color: root.surface
-        border.color: root.dark ? "#80ffffff" : "#dddfe2"
+    exit: Transition {
+        NumberAnimation { property: "x"; to: root.host.width; duration: 135; easing.type: Easing.InCubic }
+    }
+    Overlay.modal: Rectangle {
+        color: "#48000000"
+        Behavior on opacity { NumberAnimation { duration: 140 } }
+    }
+    background: Rectangle { color: root.surface }
+
+    component Caption: Label {
+        Layout.topMargin: 15
+        Layout.bottomMargin: 3
+        color: root.textColor
+        font.pixelSize: 14
+        font.weight: Font.DemiBold
+    }
+
+    component Choices: RowLayout {
+        id: choices
+        required property var items
+        required property string current
+        signal picked(string value)
+        Layout.fillWidth: true
+        spacing: 3
+        Repeater {
+            model: choices.items
+            delegate: Button {
+                id: choice
+                required property var modelData
+                objectName: choices.objectName + modelData.value
+                Layout.fillWidth: true
+                Layout.preferredWidth: 1
+                implicitHeight: 34
+                text: modelData.label
+                checked: choices.current === modelData.value
+                palette.buttonText: root.textColor
+                palette.brightText: root.dark ? "#94d6ff" : "#005c92"
+                background: Rectangle {
+                    radius: 5
+                    color: choice.checked ? (root.dark ? "#17394e" : "#d5edfb")
+                           : choice.hovered || choice.visualFocus ? (root.dark ? "#38424c" : "#dce3e9") : root.optionColor
+                }
+                onClicked: choices.picked(modelData.value)
+            }
+        }
     }
 
     contentItem: ScrollView {
@@ -62,7 +101,8 @@ Popup {
                     font.weight: Font.DemiBold
                 }
                 PlayerIconButton {
-                    iconSource: root.dark ? root.iconRoot + "x.svg" : root.iconRoot + "x-dark.svg"
+                    iconSource: root.iconRoot + "x.svg"
+                    foreground: root.textColor
                     iconSize: 20
                     hoverColor: root.dark ? "#2cffffff" : "#16000000"
                     hint: root.russian ? qsTr("Закрыть настройки") : qsTr("Close settings")
@@ -70,215 +110,73 @@ Popup {
                 }
             }
 
-            Label {
-                Layout.topMargin: 17
-                text: root.russian ? qsTr("Оформление") : qsTr("Appearance")
-                color: root.mutedColor
-                font.pixelSize: 14
-                font.weight: Font.DemiBold
+            Caption { text: root.russian ? qsTr("Оформление") : qsTr("Appearance") }
+            Choices {
+                objectName: "appearance"
+                items: [
+                    { value: "system", label: root.russian ? qsTr("Система") : qsTr("System") },
+                    { value: "light", label: root.russian ? qsTr("Светлая") : qsTr("Light") },
+                    { value: "dark", label: root.russian ? qsTr("Тёмная") : qsTr("Dark") }
+                ]
+                current: root.backend.appearance
+                onPicked: value => root.backend.changeAppearance(value)
+            }
+            Caption { text: root.russian ? qsTr("Язык") : qsTr("Language") }
+            Choices {
+                objectName: "language"
+                items: [{ value: "ru", label: "Русский" }, { value: "en", label: "English" }]
+                current: root.backend.language
+                onPicked: value => root.backend.changeLanguage(value)
             }
             RowLayout {
                 Layout.fillWidth: true
-                Layout.topMargin: 8
-                spacing: 6
-
-                Repeater {
-                    model: [
-                        {
-                            value: "system",
-                            label: root.russian ? qsTr("Система") : qsTr("System")
-                        },
-                        {
-                            value: "light",
-                            label: root.russian ? qsTr("Светлая") : qsTr("Light")
-                        },
-                        {
-                            value: "dark",
-                            label: root.russian ? qsTr("Тёмная") : qsTr("Dark")
-                        }
-                    ]
-                    delegate: Button {
-                        id: option
-                        required property var modelData
-                        Layout.fillWidth: true
-                        implicitHeight: 44
-                        text: modelData.label
-                        font.pixelSize: 14
-                        checked: root.backend.appearance === modelData.value
-                        contentItem: Label {
-                            text: option.text
-                            color: option.checked ? "#ffffff" : root.textColor
-                            font: option.font
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                        }
-                        background: Rectangle {
-                            radius: 7
-                            color: option.checked ? "#009df7" : root.optionColor
-                            border.color: option.visualFocus ? "#009df7" : "transparent"
-                            border.width: 2
-                        }
-                        onClicked: root.backend.changeAppearance(modelData.value)
-                    }
+                Layout.topMargin: 12
+                spacing: 2
+                Label {
+                    Layout.fillWidth: true
+                    text: root.russian ? qsTr("Задержка звука") : qsTr("Audio delay")
+                    color: root.textColor
                 }
-            }
-
-            Label {
-                Layout.topMargin: 19
-                text: root.russian ? qsTr("Аудио и видео") : qsTr("Audio and video")
-                color: root.mutedColor
-                font.pixelSize: 14
-                font.weight: Font.DemiBold
-            }
-            Label {
-                Layout.topMargin: 9
-                text: root.russian ? qsTr("Задержка звука") : qsTr("Audio delay")
-                color: root.textColor
-                font.pixelSize: 15
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                Layout.topMargin: 5
-                spacing: 8
-
-                Button {
-                    id: decreaseDelay
-                    implicitWidth: 44
-                    implicitHeight: 44
-                    Accessible.name: root.russian ? qsTr("Уменьшить задержку звука") : qsTr("Decrease audio delay")
-                    contentItem: Item {
-                        Image {
-                            anchors.centerIn: parent
-                            width: 20
-                            height: 20
-                            source: root.iconRoot + (root.dark ? "minus.svg" : "minus-dark.svg")
-                            sourceSize: Qt.size(20, 20)
-                        }
-                    }
-                    background: Rectangle {
-                        radius: 7
-                        color: decreaseDelay.hovered ? (root.dark ? "#425365" : "#dfe7f0") : root.optionColor
-                        border.color: decreaseDelay.visualFocus ? "#009df7" : "transparent"
-                        border.width: 2
-                    }
+                PlayerIconButton {
+                    iconSource: root.iconRoot + "minus.svg"
+                    foreground: root.textColor
+                    implicitWidth: 31
+                    iconSize: 17
+                    hint: root.russian ? qsTr("Уменьшить задержку") : qsTr("Decrease delay")
                     onClicked: root.backend.changeAudioDelay(Math.round((root.backend.audioDelay - 0.05) * 100) / 100)
                 }
                 Label {
-                    Layout.fillWidth: true
+                    Layout.minimumWidth: 55
                     horizontalAlignment: Text.AlignHCenter
-                    text: (root.backend.audioDelay >= 0 ? "+" : "") + root.backend.audioDelay.toFixed(2) + " s"
+                    text: root.backend.audioDelay.toFixed(2) + (root.russian ? " с" : " s")
                     color: root.textColor
-                    font.pixelSize: 15
-                    Accessible.name: root.russian ? qsTr("Задержка звука %1 секунды").arg(root.backend.audioDelay.toFixed(2)) : qsTr("Audio delay %1 seconds").arg(root.backend.audioDelay.toFixed(2))
                 }
-                Button {
-                    id: increaseDelay
-                    implicitWidth: 44
-                    implicitHeight: 44
-                    Accessible.name: root.russian ? qsTr("Увеличить задержку звука") : qsTr("Increase audio delay")
-                    contentItem: Item {
-                        Image {
-                            anchors.centerIn: parent
-                            width: 20
-                            height: 20
-                            source: root.iconRoot + (root.dark ? "plus.svg" : "plus-dark.svg")
-                            sourceSize: Qt.size(20, 20)
-                        }
-                    }
-                    background: Rectangle {
-                        radius: 7
-                        color: increaseDelay.hovered ? (root.dark ? "#425365" : "#dfe7f0") : root.optionColor
-                        border.color: increaseDelay.visualFocus ? "#009df7" : "transparent"
-                        border.width: 2
-                    }
+                PlayerIconButton {
+                    iconSource: root.iconRoot + "plus.svg"
+                    foreground: root.textColor
+                    implicitWidth: 31
+                    iconSize: 17
+                    hint: root.russian ? qsTr("Увеличить задержку") : qsTr("Increase delay")
                     onClicked: root.backend.changeAudioDelay(Math.round((root.backend.audioDelay + 0.05) * 100) / 100)
                 }
-                Button {
-                    id: resetDelay
-                    implicitHeight: 44
-                    text: root.russian ? qsTr("Сброс") : qsTr("Reset")
-                    font.pixelSize: 13
+                PlayerIconButton {
+                    objectName: "resetDelay"
+                    iconSource: root.iconRoot + "reset.svg"
+                    foreground: root.textColor
+                    implicitWidth: 31
+                    iconSize: 17
                     enabled: root.backend.audioDelay !== 0
-                    palette.buttonText: root.textColor
-                    background: Rectangle {
-                        radius: 7
-                        color: resetDelay.hovered ? (root.dark ? "#425365" : "#dfe7f0") : root.optionColor
-                        border.color: resetDelay.visualFocus ? "#009df7" : "transparent"
-                        border.width: 2
-                    }
+                    hint: root.russian ? qsTr("Сбросить задержку") : qsTr("Reset delay")
                     onClicked: root.backend.changeAudioDelay(0)
                 }
             }
-            Label {
-                Layout.fillWidth: true
-                Layout.topMargin: 6
-                text: root.russian ? qsTr("Плюс задерживает звук") : qsTr("Positive delays audio")
-                color: root.mutedColor
-                font.pixelSize: 12
-            }
-
-            Label {
-                Layout.topMargin: 17
-                text: root.russian ? qsTr("Язык") : qsTr("Language")
-                color: root.mutedColor
-                font.pixelSize: 14
-                font.weight: Font.DemiBold
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                Layout.topMargin: 8
-                spacing: 6
-
-                Repeater {
-                    model: [
-                        {
-                            value: "ru",
-                            label: "Русский"
-                        },
-                        {
-                            value: "en",
-                            label: "English"
-                        }
-                    ]
-                    delegate: Button {
-                        id: languageOption
-                        required property var modelData
-                        Layout.fillWidth: true
-                        implicitHeight: 44
-                        text: modelData.label
-                        font.pixelSize: 14
-                        checked: root.backend.language === modelData.value
-                        contentItem: Label {
-                            text: languageOption.text
-                            color: languageOption.checked ? "#ffffff" : root.textColor
-                            font: languageOption.font
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                        }
-                        background: Rectangle {
-                            radius: 7
-                            color: languageOption.checked ? "#009df7" : root.optionColor
-                            border.color: languageOption.visualFocus ? "#009df7" : "transparent"
-                            border.width: 2
-                        }
-                        onClicked: root.backend.changeLanguage(modelData.value)
-                    }
-                }
-            }
-
-            Label {
-                Layout.topMargin: 19
-                text: root.russian ? qsTr("Перевод субтитров") : qsTr("Subtitle translation")
-                color: root.mutedColor
-                font.pixelSize: 14
-                font.weight: Font.DemiBold
-            }
+            Caption { text: root.russian ? qsTr("Перевод субтитров") : qsTr("Subtitle translation") }
             Switch {
                 id: translationSwitch
                 objectName: "subtitleTranslationSwitch"
                 Layout.fillWidth: true
                 Layout.topMargin: 7
-                implicitHeight: 44
+                implicitHeight: 36
                 text: root.russian ? qsTr("Включить для всех видео") : qsTr("Enable for all videos")
                 checked: root.backend.subtitleTranslationEnabled
                 indicator: Rectangle {
@@ -307,37 +205,11 @@ Popup {
                 }
                 onToggled: root.backend.changeSubtitleTranslation(checked)
             }
-            RowLayout {
-                Layout.fillWidth: true
-                Layout.topMargin: 8
-                spacing: 6
-
-                Repeater {
-                    model: [
-                        { value: "ru", label: "Русский" },
-                        { value: "en", label: "English" }
-                    ]
-                    delegate: Button {
-                        id: targetOption
-                        required property var modelData
-                        objectName: "subtitleTarget" + modelData.value
-                        Layout.fillWidth: true
-                        implicitHeight: 44
-                        text: modelData.label
-                        checked: root.backend.subtitleTarget === modelData.value
-                        contentItem: Label {
-                            text: targetOption.text
-                            color: targetOption.checked ? "#ffffff" : root.textColor
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                        }
-                        background: Rectangle {
-                            radius: 7
-                            color: targetOption.checked ? "#009df7" : root.optionColor
-                        }
-                        onClicked: root.backend.changeSubtitleTarget(modelData.value)
-                    }
-                }
+            Choices {
+                objectName: "subtitleTarget"
+                items: [{ value: "ru", label: "Русский" }, { value: "en", label: "English" }]
+                current: root.backend.subtitleTarget
+                onPicked: value => root.backend.changeSubtitleTarget(value)
             }
             Label {
                 Layout.topMargin: 10
@@ -361,7 +233,7 @@ Popup {
             }
             Label {
                 Layout.topMargin: 9
-                text: root.russian ? qsTr("Усилие") : qsTr("Effort")
+                text: root.russian ? qsTr("Глубина рассуждения") : qsTr("Effort")
                 color: root.textColor
                 font.pixelSize: 15
             }
@@ -408,7 +280,7 @@ Popup {
                     id: checkUpdate
                     objectName: "checkUpdate"
                     Layout.fillWidth: true
-                    implicitHeight: 44
+                    implicitHeight: 36
                     text: root.russian ? qsTr("Проверить") : qsTr("Check")
                     enabled: root.backend.updateState !== "checking" && root.backend.updateState !== "downloading"
                              && root.backend.updateState !== "ready" && root.backend.updateState !== "installing"
@@ -425,7 +297,7 @@ Popup {
                     id: applyUpdate
                     objectName: "applyUpdate"
                     Layout.fillWidth: true
-                    implicitHeight: 44
+                    implicitHeight: 36
                     visible: root.backend.updateVersion.length > 0
                     enabled: root.backend.updateState !== "downloading" && root.backend.updateState !== "installing"
                     text: {

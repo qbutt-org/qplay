@@ -21,6 +21,7 @@ pub enum Event {
     Property(String, PropertyValue),
     StartFile,
     FileLoaded,
+    Seek,
     EndFile(i32),
     ExtractorError(String),
     Command(u64, i32),
@@ -170,6 +171,7 @@ impl Session {
             ("vo", "libmpv"),
             ("idle", "yes"),
             ("keep-open", "yes"),
+            ("loop-file", "inf"),
             ("terminal", "no"),
             ("osc", "no"),
             ("load-scripts", "no"),
@@ -227,6 +229,7 @@ impl Session {
             ("speed", mpv::FORMAT_DOUBLE),
             ("pause", mpv::FORMAT_FLAG),
             ("mute", mpv::FORMAT_FLAG),
+            ("loop-file", mpv::FORMAT_STRING),
             ("track-list", mpv::FORMAT_STRING),
             ("current-demuxer", mpv::FORMAT_STRING),
             ("options/aid", mpv::FORMAT_STRING),
@@ -392,6 +395,7 @@ impl Session {
                 let data = unsafe { &*event.data.cast::<mpv::RawEndFile>() };
                 Some(Event::EndFile(data.error))
             }
+            mpv::EVENT_SEEK => Some(Event::Seek),
             mpv::EVENT_FILE_LOADED => Some(Event::FileLoaded),
             mpv::EVENT_CLIENT_MESSAGE => {
                 // SAFETY: mpv owns the message and null-terminated arguments until

@@ -1,7 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Controls.Basic
 import QtQuick.Dialogs
 import QtQuick.Layouts
 import Qplay.Player
@@ -12,39 +12,103 @@ Popup {
     required property PlayerController backend
     required property Item host
     property bool russian: false
-    property int page: 0
+    property string page
+    property Item trigger
     readonly property string iconRoot: "qrc:/qt/qml/Qplay/Views/assets/icons/"
-    readonly property string subtitleChoice: {
-        if (backend.subtitleTranslationActive) {
-            if (backend.subtitleTarget === "ru")
-                return russian ? qsTr("Перевод: русский") : qsTr("Translation: Russian")
-            return russian ? qsTr("Перевод: английский") : qsTr("Translation: English")
+    readonly property string automatic: russian ? qsTr("Авто") : qsTr("Auto")
+    readonly property string off: russian ? qsTr("Выкл.") : qsTr("Off")
+
+    function showFor(button: Item, section: string) {
+        if (visible && page === section) {
+            close();
+            return;
         }
-        if (backend.subtitleSelection === "no")
-            return russian ? qsTr("Выкл.") : qsTr("Off")
-        if (backend.subtitleSelection === "auto")
-            return russian ? qsTr("Авто") : qsTr("Auto")
-        return (russian ? qsTr("Дорожка %1") : qsTr("Track %1")).arg(backend.subtitleSelection)
+        trigger = button;
+        page = section;
+        open();
     }
-    readonly property string audioChoice: backend.audioSelection === "auto" ? (russian ? qsTr("Авто") : qsTr("Auto")) : (russian ? qsTr("Дорожка %1") : qsTr("Track %1")).arg(backend.audioSelection)
-    readonly property string fxStatus: backend.framegenStatus === "loading" ? (russian ? qsTr("Подготовка") : qsTr("Preparing")) : backend.framegenStatus === "active" ? (russian ? qsTr("Генерация кадров") : qsTr("Frame generation")) : backend.effectiveShader === "off" ? (russian ? qsTr("Выкл.") : qsTr("Off")) : backend.effectiveShader === "fsr" ? "FSR" : "Anime4K"
 
-    signal advancedRequested
-
-    parent: host
-    x: parent.width - width - 26
-    y: parent.height - height - 104
-    width: Math.min(328, parent.width - 32)
-    height: Math.min(460, menuBody.implicitHeight + 36, parent.height - 130)
-    padding: 18
-    modal: false
-    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-    onClosed: page = 0
-
+    parent: trigger || host
+    x: trigger ? Math.min(0, host.width - trigger.mapToItem(host, 0, 0).x - width - 12) : 0
+    y: -height - 8
+    width: page === "speed" ? 270 : 306
+    height: Math.min(menuBody.implicitHeight + 24, host.height - 132)
+    padding: 12
+    focus: true
+    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
+    transformOrigin: Item.BottomLeft
+    enter: Transition {
+        NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 115; easing.type: Easing.OutCubic }
+        NumberAnimation { property: "scale"; from: 0.96; to: 1; duration: 145; easing.type: Easing.OutCubic }
+    }
+    exit: Transition {
+        NumberAnimation { property: "opacity"; to: 0; duration: 85 }
+        NumberAnimation { property: "scale"; to: 0.98; duration: 85; easing.type: Easing.InQuad }
+    }
     background: Rectangle {
-        radius: 14
-        color: "#d83d3f42"
-        border.color: "#80ffffff"
+        radius: 10
+        color: "#fa15191e"
+        border.color: "#353c44"
+    }
+
+    component Option: ItemDelegate {
+        id: option
+        property bool current: false
+        Layout.fillWidth: true
+        implicitHeight: 38
+        leftPadding: 10
+        rightPadding: 10
+        contentItem: RowLayout {
+            Label {
+                Layout.fillWidth: true
+                text: option.text
+                color: option.enabled ? "#f4f6f8" : "#888e96"
+                elide: Text.ElideRight
+                font.pixelSize: 14
+                verticalAlignment: Text.AlignVCenter
+            }
+            Image {
+                visible: option.current
+                source: root.iconRoot + "check.svg"
+                sourceSize: Qt.size(18, 18)
+            }
+        }
+        background: Rectangle {
+            radius: 5
+            color: option.down ? "#39424c" : option.hovered || option.visualFocus ? "#2a3139" : "transparent"
+        }
+    }
+
+    component FxChoice: ComboBox {
+        id: choice
+        Layout.fillWidth: true
+        implicitHeight: 36
+        leftPadding: 10
+        rightPadding: 30
+        palette.text: "#edf2f5"
+        palette.buttonText: "#edf2f5"
+        palette.windowText: "#edf2f5"
+        palette.window: "#20262d"
+        palette.base: "#20262d"
+        palette.highlight: "#16405b"
+        background: Rectangle {
+            radius: 5
+            color: choice.hovered || choice.visualFocus ? "#333c45" : "#252c33"
+        }
+        indicator: Image {
+            x: choice.width - width - 10
+            y: (choice.height - height) / 2
+            source: root.iconRoot + "chevron-down.svg"
+            sourceSize: Qt.size(16, 16)
+        }
+    }
+
+    component Heading: Label {
+        Layout.topMargin: 5
+        Layout.leftMargin: 10
+        Layout.bottomMargin: 3
+        color: "#adb9c4"
+        font.pixelSize: 13
     }
 
     contentItem: ScrollView {
@@ -55,231 +119,67 @@ Popup {
         ColumnLayout {
             id: menuBody
             width: scroll.availableWidth
-            spacing: 4
-
-            RowLayout {
-                Layout.fillWidth: true
-                Layout.bottomMargin: 8
-                spacing: 4
-
-                PlayerIconButton {
-                    visible: root.page !== 0
-                    iconSource: root.iconRoot + "chevron-left.svg"
-                    iconSize: 20
-                    hint: root.russian ? qsTr("Назад") : qsTr("Back")
-                    onClicked: root.page = 0
-                }
-                Label {
-                    Layout.fillWidth: true
-                    text: root.page === 0 ? (root.russian ? qsTr("Воспроизведение") : qsTr("Playback")) : root.page === 1 ? (root.russian ? qsTr("Аудиодорожка") : qsTr("Audio track")) : root.page === 2 ? (root.russian ? qsTr("Субтитры") : qsTr("Subtitles")) : root.page === 3 ? (root.russian ? qsTr("Скорость") : qsTr("Speed")) : "FX"
-                    color: "#ffffff"
-                    font.pixelSize: 19
-                    font.weight: Font.DemiBold
-                }
-            }
-
-            Repeater {
-                model: root.page === 0 ? [
-                    {
-                        title: root.russian ? qsTr("Аудиодорожка") : qsTr("Audio track"),
-                        value: root.audioChoice,
-                        page: 1
-                    },
-                    {
-                        title: root.russian ? qsTr("Субтитры") : qsTr("Subtitles"),
-                        value: root.subtitleChoice,
-                        page: 2
-                    },
-                    {
-                        title: root.russian ? qsTr("Скорость") : qsTr("Speed"),
-                        value: Math.round(root.backend.speed * 100) / 100 + "×",
-                        page: 3
-                    },
-                    {
-                        title: "FX",
-                        value: root.fxStatus,
-                        page: 4
-                    }
-                ] : []
-                delegate: ItemDelegate {
-                    id: mainRow
-                    required property var modelData
-                    objectName: modelData.page === 3 ? "speedMenuRow" : modelData.page === 4 ? "fxMenuRow" : ""
-                    Layout.fillWidth: true
-                    implicitHeight: 50
-                    Accessible.name: modelData.title + ": " + modelData.value
-                    background: Rectangle {
-                        radius: 7
-                        color: mainRow.hovered ? "#343638" : "transparent"
-                        border.color: mainRow.visualFocus ? "#009df7" : "transparent"
-                        border.width: 2
-                    }
-                    contentItem: RowLayout {
-                        spacing: 8
-                        Label {
-                            Layout.fillWidth: true
-                            text: mainRow.modelData.title
-                            color: "#ffffff"
-                            font.pixelSize: 15
-                        }
-                        Label {
-                            text: mainRow.modelData.value
-                            color: "#b9bec4"
-                            font.pixelSize: 14
-                        }
-                        Image {
-                            source: root.iconRoot + "chevron-right.svg"
-                            sourceSize: Qt.size(16, 16)
-                            Layout.preferredWidth: 16
-                            Layout.preferredHeight: 16
-                        }
-                    }
-                    onClicked: root.page = modelData.page
-                }
-            }
-
-            ItemDelegate {
-                id: advanced
-                objectName: "advancedButton"
-                visible: root.page === 0
-                Layout.fillWidth: true
-                Layout.topMargin: 10
-                implicitHeight: 44
-                text: root.russian ? qsTr("Дополнительные настройки") : qsTr("Advanced settings")
-                Accessible.name: text
-                background: Rectangle {
-                    radius: 7
-                    color: advanced.hovered ? "#343638" : "transparent"
-                    border.color: advanced.visualFocus ? "#009df7" : "transparent"
-                    border.width: 2
-                }
-                contentItem: RowLayout {
-                    Label {
-                        Layout.fillWidth: true
-                        text: advanced.text
-                        color: "#ffffff"
-                        font.pixelSize: 15
-                    }
-                    Image {
-                        source: root.iconRoot + "chevron-right.svg"
-                        sourceSize: Qt.size(16, 16)
-                        Layout.preferredWidth: 16
-                        Layout.preferredHeight: 16
-                    }
-                }
-                onClicked: {
-                    root.close();
-                    root.advancedRequested();
-                }
-            }
+            spacing: 2
 
             ColumnLayout {
-                visible: root.page === 1
+                visible: root.page === "audio"
                 Layout.fillWidth: true
-                spacing: 2
-
-                ItemDelegate {
-                    id: audioAuto
-                    objectName: "audioAutoButton"
-                    Layout.fillWidth: true
-                    implicitHeight: 44
-                    enabled: root.backend.mediaLoaded
-                    text: root.russian ? qsTr("Авто") : qsTr("Auto")
-                    Accessible.name: text
-                    background: Rectangle {
-                        radius: 7
-                        color: audioAuto.hovered ? "#343638" : "transparent"
-                        border.color: audioAuto.visualFocus ? "#009df7" : "transparent"
-                        border.width: 2
-                    }
-                    contentItem: RowLayout {
-                        Label {
-                            Layout.fillWidth: true
-                            text: audioAuto.text
-                            color: "#ffffff"
-                        }
-                        Image {
-                            visible: root.backend.audioSelection === "auto"
-                            source: root.iconRoot + "check.svg"
-                            sourceSize: Qt.size(20, 20)
-                            Layout.preferredWidth: 20
-                            Layout.preferredHeight: 20
-                        }
-                    }
+                spacing: 0
+                Heading { text: root.russian ? qsTr("Аудиодорожка") : qsTr("Audio track") }
+                Option {
+                    text: root.automatic
+                    current: root.backend.audioSelection === "auto"
                     onClicked: root.backend.selectAutomaticTrack("audio")
                 }
-
                 Repeater {
                     model: root.backend.audioTracks
-                    delegate: ItemDelegate {
-                        id: audioTrack
+                    delegate: Option {
                         required property int trackId
                         required property string label
                         required property bool selected
-                        Layout.fillWidth: true
-                        implicitHeight: 44
-                        text: (root.russian ? qsTr("Дорожка %1") : qsTr("Track %1")).arg(trackId) + (label.length ? " — " + label : "")
-                        Accessible.name: text
-                        background: Rectangle {
-                            radius: 7
-                            color: audioTrack.hovered ? "#343638" : "transparent"
-                            border.color: audioTrack.visualFocus ? "#009df7" : "transparent"
-                            border.width: 2
-                        }
-                        contentItem: RowLayout {
-                            Label {
-                                Layout.fillWidth: true
-                                text: audioTrack.text
-                                color: "#ffffff"
-                                elide: Text.ElideRight
-                            }
-                            Image {
-                                visible: audioTrack.selected && root.backend.audioSelection !== "auto"
-                                source: root.iconRoot + "check.svg"
-                                sourceSize: Qt.size(20, 20)
-                                Layout.preferredWidth: 20
-                                Layout.preferredHeight: 20
-                            }
-                        }
+                        text: label || (root.russian ? qsTr("Дорожка %1") : qsTr("Track %1")).arg(trackId)
+                        current: selected && root.backend.audioSelection !== "auto"
                         onClicked: root.backend.selectTrack("audio", trackId)
                     }
                 }
             }
 
             ColumnLayout {
-                visible: root.page === 2
+                visible: root.page === "subs"
                 Layout.fillWidth: true
-                spacing: 2
-
-                ItemDelegate {
-                    id: translateSubtitles
-                    Layout.fillWidth: true
-                    implicitHeight: 44
-                    enabled: root.backend.mediaLoaded
+                spacing: 0
+                Heading { text: root.russian ? qsTr("Субтитры") : qsTr("Subtitles") }
+                Option {
+                    text: root.off
+                    current: root.backend.subtitleSelection === "no"
+                    onClicked: root.backend.disableSubtitles()
+                }
+                Option {
+                    text: root.automatic
+                    current: root.backend.subtitleSelection === "auto"
+                    onClicked: root.backend.selectAutomaticTrack("sub")
+                }
+                Repeater {
+                    model: root.backend.subtitleTracks
+                    delegate: Option {
+                        required property int trackId
+                        required property string label
+                        required property bool selected
+                        text: label || (root.russian ? qsTr("Дорожка %1") : qsTr("Track %1")).arg(trackId)
+                        current: selected && root.backend.subtitleSelection !== "auto"
+                        onClicked: root.backend.selectTrack("sub", trackId)
+                    }
+                }
+                Option {
+                    text: root.russian ? qsTr("Добавить файл субтитров…") : qsTr("Add subtitle file…")
+                    onClicked: subtitleDialog.open()
+                }
+                Option {
+                    objectName: "translateSubtitles"
                     text: root.backend.subtitleTarget === "ru"
                           ? (root.russian ? qsTr("Перевести на русский") : qsTr("Translate to Russian"))
                           : (root.russian ? qsTr("Перевести на английский") : qsTr("Translate to English"))
-                    Accessible.name: text
-                    contentItem: RowLayout {
-                        Label {
-                            Layout.fillWidth: true
-                            text: translateSubtitles.text
-                            color: "#62beff"
-                        }
-                        Image {
-                            visible: root.backend.subtitleTranslationActive
-                            source: root.iconRoot + "check.svg"
-                            sourceSize: Qt.size(20, 20)
-                            Layout.preferredWidth: 20
-                            Layout.preferredHeight: 20
-                        }
-                    }
-                    background: Rectangle {
-                        radius: 7
-                        color: translateSubtitles.hovered ? "#343638" : "transparent"
-                        border.color: translateSubtitles.visualFocus ? "#009df7" : "transparent"
-                        border.width: 2
-                    }
+                    current: root.backend.subtitleTranslationActive
                     onClicked: root.backend.useTranslatedSubtitles()
                 }
                 Label {
@@ -302,139 +202,20 @@ Popup {
                     font.pixelSize: 13
                 }
 
-                Repeater {
-                    model: [
-                        {
-                            title: root.russian ? qsTr("Выкл.") : qsTr("Off"),
-                            value: "no"
-                        },
-                        {
-                            title: root.russian ? qsTr("Авто") : qsTr("Auto"),
-                            value: "auto"
-                        }
-                    ]
-                    delegate: ItemDelegate {
-                        id: subtitleOption
-                        required property var modelData
-                        Layout.fillWidth: true
-                        implicitHeight: 44
-                        enabled: root.backend.mediaLoaded
-                        text: modelData.title
-                        Accessible.name: text
-                        background: Rectangle {
-                            radius: 7
-                            color: subtitleOption.hovered ? "#343638" : "transparent"
-                            border.color: subtitleOption.visualFocus ? "#009df7" : "transparent"
-                            border.width: 2
-                        }
-                        contentItem: RowLayout {
-                            Label {
-                                Layout.fillWidth: true
-                                text: subtitleOption.text
-                                color: "#ffffff"
-                            }
-                            Image {
-                                visible: root.backend.subtitleSelection === subtitleOption.modelData.value
-                                source: root.iconRoot + "check.svg"
-                                sourceSize: Qt.size(20, 20)
-                                Layout.preferredWidth: 20
-                                Layout.preferredHeight: 20
-                            }
-                        }
-                        onClicked: {
-                            if (modelData.value === "no")
-                                root.backend.disableSubtitles();
-                            else
-                                root.backend.selectAutomaticTrack("sub");
-                        }
-                    }
-                }
-                Repeater {
-                    model: root.backend.subtitleTracks
-                    delegate: ItemDelegate {
-                        id: subtitleTrack
-                        required property int trackId
-                        required property string label
-                        required property bool selected
-                        Layout.fillWidth: true
-                        implicitHeight: 44
-                        text: (root.russian ? qsTr("Дорожка %1") : qsTr("Track %1")).arg(trackId) + (label.length ? " — " + label : "")
-                        Accessible.name: text
-                        background: Rectangle {
-                            radius: 7
-                            color: subtitleTrack.hovered ? "#343638" : "transparent"
-                            border.color: subtitleTrack.visualFocus ? "#009df7" : "transparent"
-                            border.width: 2
-                        }
-                        contentItem: RowLayout {
-                            Label {
-                                Layout.fillWidth: true
-                                text: subtitleTrack.text
-                                color: "#ffffff"
-                                elide: Text.ElideRight
-                            }
-                            Image {
-                                visible: subtitleTrack.selected && root.backend.subtitleSelection !== "auto"
-                                source: root.iconRoot + "check.svg"
-                                sourceSize: Qt.size(20, 20)
-                                Layout.preferredWidth: 20
-                                Layout.preferredHeight: 20
-                            }
-                        }
-                        onClicked: root.backend.selectTrack("sub", trackId)
-                    }
-                }
-                ItemDelegate {
-                    id: addSubtitle
-                    Layout.fillWidth: true
-                    implicitHeight: 44
-                    enabled: root.backend.mediaLoaded
-                    text: root.russian ? qsTr("Добавить файл субтитров") : qsTr("Add subtitle file")
-                    Accessible.name: text
-                    contentItem: Label {
-                        text: addSubtitle.text
-                        color: "#62beff"
-                    }
-                    background: Rectangle {
-                        radius: 7
-                        color: addSubtitle.hovered ? "#343638" : "transparent"
-                        border.color: addSubtitle.visualFocus ? "#009df7" : "transparent"
-                        border.width: 2
-                    }
-                    onClicked: subtitleDialog.open()
-                }
-                ItemDelegate {
-                    id: resetSubtitlePosition
-                    Layout.fillWidth: true
-                    implicitHeight: 44
+                PlayerIconButton {
                     visible: root.backend.subtitleMovable && Math.abs(root.backend.subtitlePosition - 85) >= 0.1
-                    text: root.russian ? qsTr("Вернуть положение субтитров") : qsTr("Reset subtitle position")
-                    Accessible.name: text
-                    contentItem: Label {
-                        text: resetSubtitlePosition.text
-                        color: "#62beff"
-                    }
-                    background: Rectangle {
-                        radius: 7
-                        color: resetSubtitlePosition.hovered ? "#343638" : "transparent"
-                        border.color: resetSubtitlePosition.visualFocus ? "#009df7" : "transparent"
-                        border.width: 2
-                    }
+                    iconSource: root.iconRoot + "reset.svg"
+                    hint: root.russian ? qsTr("Сбросить положение субтитров") : qsTr("Reset subtitle position")
                     onClicked: root.backend.resetSubtitlePosition()
                 }
             }
 
             ColumnLayout {
-                visible: root.page === 3
+                visible: root.page === "speed"
                 Layout.fillWidth: true
-                spacing: 14
-
-                Label {
-                    Layout.alignment: Qt.AlignHCenter
-                    text: Math.round(root.backend.speed * 100) / 100 + "×"
-                    color: "#ffffff"
-                    font.pixelSize: 28
-                    font.weight: Font.DemiBold
+                spacing: 3
+                Heading {
+                    text: (root.russian ? qsTr("Скорость %1×") : qsTr("Speed %1×")).arg(Number(root.backend.speed.toFixed(2)))
                 }
                 Slider {
                     id: speedSlider
@@ -525,161 +306,111 @@ Popup {
             }
 
             ColumnLayout {
-                visible: root.page === 4
+                visible: root.page === "fx"
                 Layout.fillWidth: true
-                spacing: 2
-
+                spacing: 5
+                Heading { text: root.russian ? qsTr("Генерация кадров") : qsTr("Frame generation") }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 2
+                    Repeater {
+                        model: [
+                            { value: "auto", label: root.automatic },
+                            { value: "on", label: root.russian ? qsTr("Вкл.") : qsTr("On") },
+                            { value: "off", label: root.off }
+                        ]
+                        delegate: Button {
+                            id: mode
+                            required property var modelData
+                            objectName: "framegenOption" + modelData.value
+                            Layout.fillWidth: true
+                            implicitHeight: 36
+                            enabled: root.backend.framegenSupported
+                            text: modelData.label
+                            highlighted: root.backend.framegenChoice === modelData.value
+                            palette.buttonText: "#ebeff3"
+                            palette.brightText: "#94d6ff"
+                            background: Rectangle {
+                                radius: 5
+                                color: mode.highlighted ? "#16364a" : mode.hovered || mode.visualFocus ? "#353d45" : "#23292f"
+                            }
+                            onClicked: root.backend.changeFramegen(modelData.value)
+                        }
+                    }
+                }
+                Label {
+                    objectName: "framegenAvailability"
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 10
+                    visible: text.length > 0
+                    wrapMode: Text.Wrap
+                    color: "#b8c6d1"
+                    text: {
+                        if (!root.backend.framegenSupported)
+                            return root.russian ? qsTr("Недоступно") : qsTr("Unavailable");
+                        const part = root.backend.framegenComponent;
+                        switch (root.backend.framegenStatus) {
+                        case "analyzing": return root.russian ? qsTr("Анализ видео…") : qsTr("Analyzing video…");
+                        case "checking": return root.russian ? qsTr("Проверка компонентов…") : qsTr("Checking components…");
+                        case "downloading": return (root.russian ? qsTr("Загрузка %1 — %2%") : qsTr("Downloading %1 — %2%")).arg(part).arg(root.backend.framegenProgress);
+                        case "installing": return (root.russian ? qsTr("Установка %1…") : qsTr("Installing %1…")).arg(part);
+                        case "waitingGpu": return root.russian ? qsTr("Генерация занята другим окном qplay") : qsTr("Another qplay window is using frame generation");
+                        case "waitingInstall": return root.russian ? qsTr("Ожидание установки в другом окне…") : qsTr("Waiting for another installation…");
+                        case "building":
+                            if (root.backend.framegenProgress >= 0)
+                                return (root.russian ? qsTr("Компиляция модели — %1% текущего этапа") : qsTr("Model compilation — %1% of this stage")).arg(root.backend.framegenProgress);
+                            return root.russian ? qsTr("Компиляция модели для этого разрешения…") : qsTr("Compiling the model for this resolution…");
+                        case "starting": return root.russian ? qsTr("Запуск фильтра…") : qsTr("Starting the filter…");
+                        case "active": return (root.russian ? qsTr("%1 кадр/с") : qsTr("%1 fps")).arg(Number(root.backend.framegenTarget.toFixed(2)));
+                        case "guarded": return root.russian ? qsTr("Недоступно для этого видео") : qsTr("Unavailable for this video");
+                        default: return "";
+                        }
+                    }
+                }
+                ProgressBar {
+                    Layout.fillWidth: true
+                    visible: root.backend.framegenProgress >= 0
+                    from: 0
+                    to: 100
+                    value: root.backend.framegenProgress
+                }
                 Label {
                     objectName: "gpuErrorMessage"
                     visible: root.backend.gpuError.length > 0
                     Layout.fillWidth: true
-                    Layout.bottomMargin: 8
-                    wrapMode: Text.WordWrap
+                    wrapMode: Text.Wrap
                     text: root.backend.gpuError === "framegenDiskSpace"
-                          ? (root.russian ? qsTr("Недостаточно места на диске для генерации кадров") : qsTr("Not enough disk space for frame generation"))
-                          : (root.russian ? qsTr("Не удалось применить FX") : qsTr("Could not apply FX"))
-                    color: "#ff9a9a"
+                          ? (root.russian ? qsTr("Недостаточно места на диске") : qsTr("Not enough disk space"))
+                          : root.backend.gpuError
+                    color: "#ffaaa4"
                 }
-
-                Label {
-                    Layout.topMargin: 10
-                    Layout.bottomMargin: 4
-                    text: root.russian ? qsTr("Генерация кадров") : qsTr("Frame generation")
-                    color: "#b9bec4"
-                    font.pixelSize: 13
-                }
-                Repeater {
-                    model: [
-                        { id: "auto", label: root.russian ? qsTr("Авто") : qsTr("Auto") },
-                        { id: "on", label: root.russian ? qsTr("Вкл.") : qsTr("On") },
-                        { id: "off", label: root.russian ? qsTr("Выкл.") : qsTr("Off") }
-                    ]
+                Heading { text: root.russian ? qsTr("Масштабирование") : qsTr("Upscaling") }
+                FxChoice {
+                    id: shader
+                    model: ["auto", "off", "fsr", "anime4k_a", "anime4k_b", "anime4k_c", "anime4k_aa",
+                            "anime4k_bb", "anime4k_ca", "anime4k_gan_2x", "anime4k_gan_3x", "anime4k_gan_4x"]
+                    readonly property var labels: [root.automatic, root.off, "FSR", "Anime4K A", "Anime4K B", "Anime4K C",
+                                                   "Anime4K A+A", "Anime4K B+B", "Anime4K C+A", "Anime4K GAN 2×", "Anime4K GAN 3×", "Anime4K GAN 4×"]
+                    currentIndex: model.indexOf(root.backend.shaderChoice)
+                    displayText: labels[currentIndex] || ""
                     delegate: ItemDelegate {
-                        id: framegenOption
-                        required property var modelData
-                        objectName: "framegenOption" + modelData.id
-                        Layout.fillWidth: true
-                        implicitHeight: 44
-                        text: modelData.label
-                        Accessible.name: text
-                        enabled: root.backend.framegenSupported
-                        onClicked: root.backend.changeFramegen(modelData.id)
-                        contentItem: RowLayout {
-                            Label {
-                                Layout.fillWidth: true
-                                text: framegenOption.text
-                                color: framegenOption.enabled ? "#ffffff" : "#7f858c"
-                            }
-                            Image {
-                                visible: root.backend.framegenChoice === framegenOption.modelData.id
-                                source: root.iconRoot + "check.svg"
-                                sourceSize: Qt.size(20, 20)
-                                Layout.preferredWidth: 20
-                                Layout.preferredHeight: 20
-                            }
-                        }
+                        required property int index
+                        width: shader.width
+                        text: shader.labels[index]
+                        highlighted: shader.highlightedIndex === index
                     }
+                    onActivated: index => root.backend.changeShader(model[index])
                 }
-
-                Label {
-                    objectName: "framegenAvailability"
-                    visible: !root.backend.framegenSupported || root.backend.framegenStatus === "loading" || root.backend.framegenStatus === "guarded"
-                    Layout.fillWidth: true
-                    Layout.topMargin: 4
-                    wrapMode: Text.WordWrap
-                    text: !root.backend.framegenSupported ? (root.russian ? qsTr("Недоступно") : qsTr("Unavailable")) : root.backend.framegenStatus === "loading" ? (root.russian ? qsTr("Подготовка в фоне") : qsTr("Preparing in the background")) : (root.russian ? qsTr("Недоступно для этого видео") : qsTr("Unavailable for this video"))
-                    color: "#b9bec4"
-                    font.pixelSize: 13
-                }
-
-                Label {
-                    Layout.topMargin: 10
-                    Layout.bottomMargin: 4
-                    text: root.russian ? qsTr("Масштабирование") : qsTr("Upscaling")
-                    color: "#b9bec4"
-                    font.pixelSize: 13
-                }
-                Repeater {
-                    model: [
-                        { id: "auto", label: root.russian ? qsTr("Авто") : qsTr("Auto") },
-                        { id: "off", label: root.russian ? qsTr("Выкл.") : qsTr("Off") },
-                        { id: "fsr", label: "FSR" },
-                        { id: "anime4k_a", label: "Anime4K A" },
-                        { id: "anime4k_b", label: "Anime4K B" },
-                        { id: "anime4k_c", label: "Anime4K C" },
-                        { id: "anime4k_aa", label: "Anime4K A+A" },
-                        { id: "anime4k_bb", label: "Anime4K B+B" },
-                        { id: "anime4k_ca", label: "Anime4K C+A" },
-                        { id: "anime4k_gan_2x", label: "Anime4K GAN 2×" },
-                        { id: "anime4k_gan_3x", label: "Anime4K GAN 3×" },
-                        { id: "anime4k_gan_4x", label: "Anime4K GAN 4×" }
-                    ]
-                    delegate: ItemDelegate {
-                        id: shaderOption
-                        required property var modelData
-                        Layout.fillWidth: true
-                        implicitHeight: 44
-                        text: modelData.label
-                        Accessible.name: text
-                        onClicked: root.backend.changeShader(modelData.id)
-                        contentItem: RowLayout {
-                            Label {
-                                Layout.fillWidth: true
-                                text: shaderOption.text
-                                color: "#ffffff"
-                            }
-                            Image {
-                                visible: root.backend.shaderChoice === shaderOption.modelData.id
-                                source: root.iconRoot + "check.svg"
-                                sourceSize: Qt.size(20, 20)
-                                Layout.preferredWidth: 20
-                                Layout.preferredHeight: 20
-                            }
-                        }
-                    }
-                }
-
-                Label {
-                    Layout.topMargin: 6
-                    Layout.bottomMargin: 4
-                    text: root.russian ? qsTr("Тип видео") : qsTr("Video type")
-                    color: "#b9bec4"
-                    font.pixelSize: 13
-                }
-                Repeater {
-                    model: [
-                        { id: "auto", label: root.russian ? qsTr("Авто") : qsTr("Auto") },
-                        { id: "anime", label: root.russian ? qsTr("Аниме") : qsTr("Anime") },
-                        { id: "movie", label: root.russian ? qsTr("Фильм") : qsTr("Movie") }
-                    ]
-                    delegate: ItemDelegate {
-                        id: contentOption
-                        required property var modelData
-                        Layout.fillWidth: true
-                        implicitHeight: 44
-                        text: modelData.label
-                        Accessible.name: text
-                        onClicked: root.backend.changeContent(modelData.id)
-                        contentItem: RowLayout {
-                            Label {
-                                Layout.fillWidth: true
-                                text: contentOption.text
-                                color: "#ffffff"
-                            }
-                            Image {
-                                visible: root.backend.contentChoice === contentOption.modelData.id
-                                source: root.iconRoot + "check.svg"
-                                sourceSize: Qt.size(20, 20)
-                                Layout.preferredWidth: 20
-                                Layout.preferredHeight: 20
-                            }
-                        }
-                    }
+                Heading { text: root.russian ? qsTr("Тип видео") : qsTr("Video type") }
+                FxChoice {
+                    model: [root.automatic, root.russian ? qsTr("Аниме") : qsTr("Anime"), root.russian ? qsTr("Фильм") : qsTr("Movie")]
+                    readonly property var values: ["auto", "anime", "movie"]
+                    currentIndex: values.indexOf(root.backend.contentChoice)
+                    onActivated: index => root.backend.changeContent(values[index])
                 }
             }
         }
     }
-
     FileDialog {
         id: subtitleDialog
         title: root.russian ? qsTr("Добавить субтитры") : qsTr("Add subtitles")

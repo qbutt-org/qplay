@@ -1,9 +1,11 @@
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Controls.Basic
 
 ToolButton {
     id: root
-    property url iconSource
+    property alias iconSource: root.icon.source
+    property color foreground: "#ffffff"
+    property bool active: false
     property string hint
     property int iconSize: 24
     property color hoverColor: "#2cffffff"
@@ -15,17 +17,15 @@ ToolButton {
     ToolTip.visible: hovered && hint.length > 0
     ToolTip.delay: 650
 
-    contentItem: Item {
-        Image {
-            anchors.centerIn: parent
-            width: root.iconSize
-            height: root.iconSize
-            source: root.iconSource
-            sourceSize: Qt.size(root.iconSize, root.iconSize)
-            fillMode: Image.PreserveAspectFit
-            opacity: root.enabled ? 1 : 0.4
-        }
-    }
+    display: text.length ? AbstractButton.TextOnly : AbstractButton.IconOnly
+    icon.width: iconSize
+    icon.height: iconSize
+    readonly property color ink: active ? "#53bcff" : foreground
+    icon.color: ink
+    palette.buttonText: ink
+    palette.windowText: ink
+    font.weight: Font.DemiBold
+    font.pixelSize: 16
 
     background: Rectangle {
         radius: 8

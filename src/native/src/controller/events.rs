@@ -99,6 +99,11 @@ impl ffi::PlayerController {
                     self.as_mut().begin_gpu_probe();
                     self.as_mut().maybe_start_subtitle_window();
                 }
+                Event::Seek => {
+                    if let Some(quality) = self.as_mut().rust_mut().gpu.quality.as_mut() {
+                        quality.filter_changed();
+                    }
+                }
                 Event::EndFile(error) => {
                     self.as_mut().rust_mut().download = None;
                     self.as_mut().cancel_subtitle_job();
@@ -208,6 +213,9 @@ impl ffi::PlayerController {
             ("volume", PropertyValue::Number(volume)) => self.as_mut().rust_mut().volume = volume,
             ("speed", PropertyValue::Number(speed)) => self.as_mut().rust_mut().speed = speed,
             ("mute", PropertyValue::Flag(muted)) => self.as_mut().rust_mut().muted = muted,
+            ("loop-file", PropertyValue::Text(value)) => {
+                self.as_mut().rust_mut().looping = value == "inf";
+            }
             ("options/aid", PropertyValue::Text(selection)) => {
                 self.as_mut().rust_mut().audio_selection = QString::from(selection)
             }

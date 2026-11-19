@@ -102,6 +102,7 @@ impl Runtime {
         width: u32,
         height: u32,
         cancel: &AtomicBool,
+        progress: &mut (impl FnMut(&'static str, &'static str, i32) + Send),
     ) -> Result<(), String> {
         check_cancel(cancel)?;
         if self.backend() == Backend::OpenVino {
@@ -109,7 +110,10 @@ impl Runtime {
         }
         let shape = super::framegen::model_shape(self.backend(), width, height);
         let (width, height) = (shape.width, shape.height);
-        let _gpu = ExclusiveFileLock::wait(&self.gpu_lock_path, cancel)?;
+        let _gpu = ExclusiveFileLock::wait(&self.gpu_lock_path, cancel, || {
+            progress("waitingGpu", "", -1)
+        })?;
+        progress("checking", "", -1);
         let target = self
             .engine_dir
             .join(format!("rife426-{width}x{height}.engine"));
@@ -131,6 +135,7 @@ impl Runtime {
             .iter()
             .map(|name| format!("{library}/{name}"))
             .collect();
+        progress("building", "TensorRT", -1);
         let bytes = tensorrt::build(
             library,
             &resources,
@@ -141,6 +146,7 @@ impl Runtime {
             width,
             height,
             cancel,
+            &mut |percent| progress("building", "TensorRT", percent),
         )?;
         check_cancel(cancel)?;
         let stage = Staging::directory(&self.engine_dir)?;
@@ -244,7 +250,11 @@ impl RuntimeStore {
             .join("locks/framegen-gpu.lock"))
     }
 
-    pub fn prepare(&self, cancel: &AtomicBool) -> Result<Runtime, String> {
+    pub fn prepare(
+        &self,
+        cancel: &AtomicBool,
+        progress: &mut (impl FnMut(&'static str, &'static str, i32) + Send),
+    ) -> Result<Runtime, String> {
         check_cancel(cancel)?;
         if !self.root.is_absolute() {
             return Err("The GPU runtime directory must be absolute.".into());
@@ -268,7 +278,11 @@ impl RuntimeStore {
         fs::create_dir_all(&self.root)
             .map_err(|error| format!("Create GPU runtime directory: {error}"))?;
         normal_directory(&self.root)?;
-        let _installer = ExclusiveFileLock::wait(&self.root.join("native-install.lock"), cancel)?;
+        let _installer =
+            ExclusiveFileLock::wait(&self.root.join("native-install.lock"), cancel, || {
+                progress("waitingInstall", "", -1)
+            })?;
+        progress("checking", "", -1);
         for name in ["cache", "versions", "engines", "staging"] {
             let directory = self.root.join(name);
             fs::create_dir_all(&directory)
@@ -294,7 +308,11 @@ impl RuntimeStore {
         let stage = Staging::directory(&self.root.join("staging"))?;
         for asset in selected {
             check_cancel(cancel)?;
-            let source = archive::obtain(asset, &cache, &self.engine_root, cancel)?;
+            let source =
+                archive::obtain(asset, &cache, &self.engine_root, cancel, |done, total| {
+                    progress("downloading", asset.label, (done * 100 / total) as i32);
+                })?;
+            progress("installing", asset.label, -1);
             extract_component(asset, &source, &stage.path, &detected.capability, cancel)?;
         }
         notices::write(&stage.path, backend)

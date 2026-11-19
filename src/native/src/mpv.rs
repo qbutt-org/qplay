@@ -43,6 +43,7 @@ pub const EVENT_START_FILE: c_int = 6;
 pub const EVENT_END_FILE: c_int = 7;
 pub const EVENT_FILE_LOADED: c_int = 8;
 pub const EVENT_CLIENT_MESSAGE: c_int = 16;
+pub const EVENT_SEEK: c_int = 20;
 pub const EVENT_PROPERTY_CHANGE: c_int = 22;
 
 pub const RENDER_API_TYPE: c_int = 1;

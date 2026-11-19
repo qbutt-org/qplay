@@ -117,6 +117,11 @@ pub mod ffi {
         #[qproperty(bool, online_waiting, cxx_name = "onlineWaiting", READ = online_waiting, NOTIFY = state_changed)]
         #[qproperty(i32, online_progress, cxx_name = "onlineProgress", READ = online_progress, NOTIFY = state_changed)]
         #[qproperty(bool, paused, READ = paused, NOTIFY = state_changed)]
+        #[qproperty(bool, looping, READ = looping, NOTIFY = state_changed)]
+        #[qproperty(QString, media_folder, cxx_name = "mediaFolder", READ = media_folder, NOTIFY = state_changed)]
+        #[qproperty(i32, framegen_progress, cxx_name = "framegenProgress", READ = framegen_progress, NOTIFY = state_changed)]
+        #[qproperty(QString, framegen_component, cxx_name = "framegenComponent", READ = framegen_component, NOTIFY = state_changed)]
+        #[qproperty(f64, framegen_target, cxx_name = "framegenTarget", READ = framegen_target, NOTIFY = state_changed)]
         #[qproperty(bool, muted, READ = muted, NOTIFY = state_changed)]
         #[qproperty(f64, position, READ = position, NOTIFY = state_changed)]
         #[qproperty(f64, duration, READ = duration, NOTIFY = state_changed)]
@@ -172,6 +177,11 @@ pub mod ffi {
         #[cxx_name = "onlineProgress"]
         fn online_progress(&self) -> i32;
         fn paused(&self) -> bool;
+        fn looping(&self) -> bool;
+        fn media_folder(&self) -> QString;
+        fn framegen_progress(&self) -> i32;
+        fn framegen_component(&self) -> QString;
+        fn framegen_target(&self) -> f64;
         fn muted(&self) -> bool;
         fn position(&self) -> f64;
         fn duration(&self) -> f64;
@@ -313,6 +323,10 @@ pub mod ffi {
         #[rust_name = "open_media"]
         fn openMedia(self: Pin<&mut Self>, media: &QString);
         #[qinvokable]
+        #[rust_name = "toggle_loop"]
+        fn toggleLoop(self: Pin<&mut Self>);
+
+        #[qinvokable]
         #[rust_name = "toggle_pause"]
         fn togglePause(self: Pin<&mut Self>);
         #[qinvokable]
@@ -418,6 +432,7 @@ pub struct PlayerControllerRust {
     render_ready: bool,
     file_loaded: bool,
     paused: bool,
+    looping: bool,
     muted: bool,
     position: f64,
     duration: f64,
@@ -492,6 +507,7 @@ impl Default for PlayerControllerRust {
             render_ready: false,
             file_loaded: false,
             paused: false,
+            looping: true,
             muted: false,
             position: 0.0,
             duration: 0.0,
@@ -613,6 +629,34 @@ impl ffi::PlayerController {
 
     fn paused(&self) -> bool {
         self.paused
+    }
+
+    fn looping(&self) -> bool {
+        self.looping
+    }
+
+    fn media_folder(&self) -> QString {
+        self.media
+            .as_deref()
+            .filter(|_| self.media_loaded())
+            .and_then(|media| std::path::Path::new(media).parent())
+            .and_then(|path| reqwest::Url::from_directory_path(path).ok())
+            .map(|url| QString::from(url.as_str()))
+            .unwrap_or_default()
+    }
+
+    fn framegen_progress(&self) -> i32 {
+        self.gpu.progress
+    }
+
+    fn framegen_component(&self) -> QString {
+        QString::from(self.gpu.component)
+    }
+
+    fn framegen_target(&self) -> f64 {
+        self.gpu
+            .selection
+            .map_or(0.0, |selection| selection.target.rate.fps())
     }
 
     fn muted(&self) -> bool {
