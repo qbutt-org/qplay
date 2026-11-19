@@ -3,11 +3,14 @@
 #include <TlHelp32.h>
 #endif
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <memory>
 #include <stdexcept>
 #include <string_view>
+#include <thread>
 
 #include <QDir>
 #include <QDirIterator>
@@ -316,8 +319,10 @@ int main(int argc, char *argv[])
             require(root != nullptr, "Create player scene failed");
             root->setParentItem(window.contentItem());
 
+            const auto frameDuration = std::chrono::duration<double>(1.0 / std::max(1.0, app.primaryScreen()->refreshRate()));
             const auto tick = [&]
             {
+                const auto nextFrame = std::chrono::steady_clock::now() + frameDuration;
                 app.processEvents();
                 require(gl.makeCurrent(&surface), "Restore current OpenGL context failed");
                 control.polishItems();
@@ -325,7 +330,7 @@ int main(int argc, char *argv[])
                 control.sync();
                 control.render();
                 control.endFrame();
-                QThread::msleep(16);
+                std::this_thread::sleep_until(nextFrame);
             };
             const auto wait = [&](const auto &condition, const char *message)
             {

@@ -362,15 +362,26 @@ impl SessionQuality {
         self.first = None;
     }
 
+    pub fn seeked(&mut self) {
+        // A seek invalidates position deltas, but keeps the filter's startup deadline.
+        // Otherwise a looping clip shorter than that deadline can wait forever.
+        self.first = None;
+    }
+
     pub fn tick(&mut self, state: PlaybackState) -> QualityAction {
         if self.disabled || !state.now.is_finite() || !state.filter_active {
             self.settle_started = None;
             self.first = None;
             return QualityAction::Keep;
         }
-        if state.paused || state.seeking || state.caching || state.eof || state.idle {
+        if state.paused || state.caching || state.idle {
             self.settle_started = None;
             self.first = None;
+            return QualityAction::Keep;
+        }
+
+        if state.seeking || state.eof {
+            self.seeked();
             return QualityAction::Keep;
         }
 

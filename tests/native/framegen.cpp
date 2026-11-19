@@ -116,38 +116,61 @@ QJsonObject exerciseFramegen(Qplay::PlayerController &backend, QOpenGLFramebuffe
     const QImage firstVideo = target.toImage().copy(0, 88, 1280, 500);
     double previous = backend.position();
     double playbackAdvance = 0;
+    double targetFps = backend.framegen_target();
     int wraps = 0;
     bool videoChanged = false;
-    double nextFrameSample = 1.0;
-    QElapsedTimer playback;
+    double nextFrameSample = 1;
+    QElapsedTimer playback, deadline;
     playback.start();
+    deadline.start();
     const bool shortClip = backend.duration() > 0 && backend.duration() < 12;
     const int interval = shortClip ? 18000 : 5000;
-    while (playback.elapsed() < interval)
+    // Measure a continuous interval at the settled target. The quality controller can
+    // lower its target while the clip is already playing on a high refresh rate display.
+    bool sustained = false;
+    while (!sustained && deadline.elapsed() < interval + 90000)
     {
         tick();
         const double position = backend.position();
-        if (previous - position > backend.duration() / 2)
+        if (backend.framegenStatus() != QStringLiteral("active") || backend.framegen_target() != targetFps)
         {
-            ++wraps;
-            playbackAdvance += backend.duration() - previous + position;
+            require(backend.gpuError().isEmpty() && backend.framegenStatus() != QStringLiteral("guarded"),
+                "Frame generation stopped while measuring playback");
+            targetFps = backend.framegen_target();
+            playback.restart();
+            playbackAdvance = 0;
+            wraps = 0;
+            nextFrameSample = 1;
         }
         else
-            playbackAdvance += position - previous;
-        previous = position;
-        if (!videoChanged && playbackAdvance >= nextFrameSample)
         {
-            videoChanged = target.toImage().copy(0, 88, 1280, 500) != firstVideo;
-            nextFrameSample = playbackAdvance + 1.0;
+            if (previous - position > backend.duration() / 2)
+            {
+                ++wraps;
+                playbackAdvance += backend.duration() - previous + position;
+            }
+            else
+                playbackAdvance += position - previous;
+            if (!videoChanged && playbackAdvance >= nextFrameSample)
+            {
+                videoChanged = target.toImage().copy(0, 88, 1280, 500) != firstVideo;
+                nextFrameSample = playbackAdvance + 1;
+            }
+            if (playback.elapsed() >= interval && playbackAdvance >= playback.elapsed() * 0.0008)
+            {
+                const double measured = backend.framegenObservation().measured_fps;
+                sustained = std::abs(measured - targetFps) <= targetFps * 0.03;
+            }
         }
+        previous = position;
     }
-    std::fprintf(stderr, "Playback %.2f s, %d loops, status %s, output %.2f fps\n",
-        playbackAdvance, wraps, backend.framegenStatus().toUtf8().constData(), backend.framegenObservation().measured_fps);
+    const double elapsedSeconds = playback.elapsed() / 1000.0;
+    std::fprintf(stderr, "Playback %.2f s in %.2f s, %d loops, target %.2f fps, output %.2f fps\n",
+        playbackAdvance, elapsedSeconds, wraps, targetFps, backend.framegenObservation().measured_fps);
+    require(sustained, "Frame generation did not sustain real-time playback");
     require(!shortClip || wraps >= 1, "Short clip did not loop with frame generation");
-    evidence[QStringLiteral("completedLoops")] = wraps;
-    require(playbackAdvance >= interval * 0.0008 && backend.framegenStatus() == QStringLiteral("active"),
-        "Frame generation did not sustain real-time playback");
     require(videoChanged, "Frame generation did not render changing video");
+    evidence[QStringLiteral("completedLoops")] = wraps;
     const auto observation = backend.framegenObservation();
     require(observation.source_fps > 0 && observation.target_fps > observation.source_fps,
         "Frame generation did not increase the source frame rate");
@@ -160,7 +183,7 @@ QJsonObject exerciseFramegen(Qplay::PlayerController &backend, QOpenGLFramebuffe
         "Save generated-frame playback composition failed");
     evidence[QStringLiteral("framegenActive")] = true;
     evidence[QStringLiteral("framegenPlaybackAdvanceSeconds")] = playbackAdvance;
-    evidence[QStringLiteral("framegenWallSeconds")] = playback.elapsed() / 1000.0;
+    evidence[QStringLiteral("framegenWallSeconds")] = elapsedSeconds;
     evidence[QStringLiteral("framegenRenderedVideoChanged")] = true;
     evidence[QStringLiteral("framegenChoice")] = backend.framegenChoice();
     evidence[QStringLiteral("framegenStatus")] = backend.framegenStatus();

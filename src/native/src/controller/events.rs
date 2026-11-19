@@ -101,7 +101,7 @@ impl ffi::PlayerController {
                 }
                 Event::Seek => {
                     if let Some(quality) = self.as_mut().rust_mut().gpu.quality.as_mut() {
-                        quality.filter_changed();
+                        quality.seeked();
                     }
                 }
                 Event::EndFile(error) => {
