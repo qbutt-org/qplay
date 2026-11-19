@@ -134,7 +134,9 @@ QJsonObject exerciseFramegen(Qplay::PlayerController &backend, QOpenGLFramebuffe
         const double position = backend.position();
         if (backend.framegenStatus() != QStringLiteral("active") || backend.framegen_target() != targetFps)
         {
-            require(backend.gpuError().isEmpty() && backend.framegenStatus() != QStringLiteral("guarded"),
+            const auto status = backend.framegenStatus();
+            require(backend.gpuError().isEmpty() && status != QStringLiteral("guarded")
+                && status != QStringLiteral("slow") && status != QStringLiteral("outputTimeout"),
                 "Frame generation stopped while measuring playback");
             targetFps = backend.framegen_target();
             playback.restart();

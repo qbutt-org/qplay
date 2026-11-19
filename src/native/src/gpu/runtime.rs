@@ -98,8 +98,6 @@ impl Runtime {
         if self.backend() == Backend::OpenVino {
             return Ok(());
         }
-        let shape = super::framegen::model_shape(self.backend(), width, height);
-        let (width, height) = (shape.width, shape.height);
         let _gpu = ExclusiveFileLock::wait(&self.gpu_lock_path, cancel, || {
             progress("waitingGpu", "", -1)
         })?;

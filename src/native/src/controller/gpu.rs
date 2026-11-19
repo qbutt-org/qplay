@@ -362,8 +362,14 @@ fn probe(
             runtime.model_path().is_file(),
         ) {
             Ok(Some(chosen)) => {
+                let size = framegen::inference_size(
+                    runtime.backend(),
+                    input.width,
+                    input.height,
+                    timing.source_rate.fps(),
+                );
                 match runtime
-                    .prepare_engine(input.width, input.height, cancel, &mut progress)
+                    .prepare_engine(size.width, size.height, cancel, &mut progress)
                     .and_then(|()| {
                         framegen::graph(
                             runtime,
@@ -404,6 +410,13 @@ fn probe(
 }
 
 impl ffi::PlayerController {
+    pub(super) fn content_kind(&self) -> ContentKind {
+        self.launch
+            .content
+            .unwrap_or(self.gpu.content_choice)
+            .effective(self.gpu.detected)
+    }
+
     pub(super) fn framegen_observation(&self) -> ffi::FramegenObservation {
         let session = self.session.as_ref();
         let filter_present = session
@@ -569,11 +582,7 @@ impl ffi::PlayerController {
         let width = session.number("video-params/w").unwrap_or(0.0) as u32;
         let height = session.number("video-params/h").unwrap_or(0.0) as u32;
         let has_video = session.text("vid").is_some_and(|vid| vid != "no");
-        let kind = self
-            .launch
-            .content
-            .unwrap_or(gpu.content_choice)
-            .effective(gpu.detected);
+        let kind = self.content_kind();
         let hardware = gpu.hardware.as_ref();
         let choice = shaders::choose_preset(
             gpu.shader_choice,
@@ -792,7 +801,7 @@ impl ffi::PlayerController {
         match action {
             QualityAction::Keep => {}
             QualityAction::Lower => self.as_mut().lower_framegen(),
-            QualityAction::DisableUntilNextVideo => {
+            QualityAction::DisableUntilNextVideo | QualityAction::OutputTimeout => {
                 self.as_mut().dispatch_gpu(
                     &["vf", "remove", "@mpv-framegen"],
                     GpuCommand::RemoveFilter {
@@ -803,7 +812,13 @@ impl ffi::PlayerController {
                 let gpu = &mut self.as_mut().rust_mut().gpu;
                 gpu.active_filter = None;
                 gpu.filter = None;
-                gpu.framegen_status = "guarded".into();
+                gpu.framegen_status = if action == QualityAction::OutputTimeout {
+                    "outputTimeout"
+                } else {
+                    "slow"
+                }
+                .into();
+                self.as_mut().apply_gpu_policy();
             }
         }
     }
@@ -911,7 +926,7 @@ impl ffi::PlayerController {
         if choice == self.gpu.framegen_choice
             && !matches!(
                 self.gpu.framegen_status.as_str(),
-                "error" | "unavailable" | "guarded"
+                "error" | "unavailable" | "guarded" | "outputTimeout" | "slow"
             )
         {
             return;

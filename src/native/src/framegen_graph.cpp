@@ -452,31 +452,34 @@ Node buildGraph(const Builder &builder, VSNode *input, GraphConfig config)
         config.step_num, config.step_den);
     const Timeline timeline {config.step_num, config.step_den};
     const int modelFormat = config.tensor_rt ? pfRGBH : pfRGBS;
-    Node rgb = builder.resize(input, modelFormat, config.matrix, config.full_range);
-    const auto shape = Qplay::Framegen::inference_shape(info.width, info.height, config.tensor_rt);
-    Node modelInput = padModelInput(builder, rgb.get(), static_cast<int>(shape.width), static_cast<int>(shape.height));
+    const auto extent = Qplay::Framegen::inference_shape(info.width, info.height, config);
+    const int inferenceWidth = static_cast<int>(extent.width);
+    const int inferenceHeight = static_cast<int>(extent.height);
+    Node rgb = builder.resize(input, modelFormat, config.matrix, config.full_range,
+        inferenceWidth, inferenceHeight);
     VSVideoInfo modelInfo = info;
-    modelInfo.width = static_cast<int>(shape.width);
-    modelInfo.height = static_cast<int>(shape.height);
+    modelInfo.width = static_cast<int>(extent.padded_width);
+    modelInfo.height = static_cast<int>(extent.padded_height);
+    Node modelInput = padModelInput(builder, rgb.get(), modelInfo.width, modelInfo.height);
     Node left = sampleNode(builder, modelInput.get(), info, timeline, 0);
     Node right = sampleNode(builder, modelInput.get(), info, timeline, 1);
     Node mask = maskNode(builder, modelInfo, timeline, std::move(lease));
     if (config.tensor_rt)
         mask = builder.resize(mask.get(), pfGrayH, config.matrix, config.full_range);
     Node generated = inferenceNode(builder, config, left.get(), right.get(), mask.get());
-    if (modelInfo.width != info.width || modelInfo.height != info.height)
+    if (modelInfo.width != inferenceWidth || modelInfo.height != inferenceHeight)
     {
         Map crop = builder.arguments();
         builder.api->mapSetNode(crop.get(), "clip", generated.get(), maReplace);
-        builder.api->mapSetInt(crop.get(), "width", info.width, maReplace);
-        builder.api->mapSetInt(crop.get(), "height", info.height, maReplace);
+        builder.api->mapSetInt(crop.get(), "width", inferenceWidth, maReplace);
+        builder.api->mapSetInt(crop.get(), "height", inferenceHeight, maReplace);
         generated = builder.invokeNode("std", "CropAbs", crop);
     }
     const auto &sourceFormat = builder.api->getVideoInfo(input)->format;
     const int sourceFormatId = static_cast<int>(builder.api->queryVideoFormatID(
         sourceFormat.colorFamily, sourceFormat.sampleType, sourceFormat.bitsPerSample,
         sourceFormat.subSamplingW, sourceFormat.subSamplingH, builder.core));
-    generated = builder.resize(generated.get(), sourceFormatId, config.matrix, config.full_range);
+    generated = builder.resize(generated.get(), sourceFormatId, config.matrix, config.full_range, info.width, info.height);
 
     // Detector thresholds are calibrated on 320px luma, preserving aspect ratio
     // with an even analysis height. Model and output retain the decoded size.

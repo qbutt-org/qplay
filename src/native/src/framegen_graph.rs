@@ -6,13 +6,14 @@ use std::sync::{Arc, Mutex, Weak};
 
 use serde::Deserialize;
 
-use crate::gpu::framegen::{Backend, model_shape};
+use crate::gpu::framegen::{Backend, inference_size, model_shape};
 use crate::gpu::runtime::lock::ExclusiveFileLock;
 
 #[cxx::bridge(namespace = "Qplay::Framegen")]
 mod ffi {
     struct GraphConfig {
         tensor_rt: bool,
+        source_fps: f64,
         target_num: i64,
         target_den: i64,
         step_num: u64,
@@ -35,9 +36,11 @@ mod ffi {
         remainder: u64,
     }
 
-    struct ModelShape {
+    struct InferenceShape {
         width: u32,
         height: u32,
+        padded_width: u32,
+        padded_height: u32,
     }
 
     extern "Rust" {
@@ -46,7 +49,7 @@ mod ffi {
         fn acquire_graph_lease(path: &str) -> Result<Box<GraphLease>>;
         fn sample_position(n: u32, numerator: u64, denominator: u64) -> Sample;
         fn output_length(source_frames: u32, numerator: u64, denominator: u64) -> i32;
-        fn inference_shape(width: u32, height: u32, tensor_rt: bool) -> ModelShape;
+        fn inference_shape(width: u32, height: u32, config: &GraphConfig) -> InferenceShape;
     }
 }
 
@@ -166,6 +169,7 @@ fn parse_graph_config(config: &str) -> Result<ffi::GraphConfig, String> {
     }
     Ok(ffi::GraphConfig {
         tensor_rt,
+        source_fps: f64::from(config.source_num) / f64::from(config.source_den),
         target_num: config.target_num.into(),
         target_den: config.target_den.into(),
         step_num: numerator,
@@ -226,16 +230,19 @@ fn output_length(source_frames: u32, numerator: u64, denominator: u64) -> i32 {
     length.min(i32::MAX as u128) as i32
 }
 
-fn inference_shape(width: u32, height: u32, tensor_rt: bool) -> ffi::ModelShape {
-    let backend = if tensor_rt {
+fn inference_shape(width: u32, height: u32, config: &ffi::GraphConfig) -> ffi::InferenceShape {
+    let backend = if config.tensor_rt {
         Backend::TensorRt
     } else {
         Backend::OpenVino
     };
-    let shape = model_shape(backend, width, height);
-    ffi::ModelShape {
+    let shape = inference_size(backend, width, height, config.source_fps);
+    let padded = model_shape(backend, shape.width, shape.height);
+    ffi::InferenceShape {
         width: shape.width,
         height: shape.height,
+        padded_width: padded.width,
+        padded_height: padded.height,
     }
 }
 

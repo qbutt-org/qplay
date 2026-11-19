@@ -362,6 +362,8 @@ Popup {
                             return root.russian ? qsTr("Компиляция модели для этого разрешения…") : qsTr("Compiling the model for this resolution…");
                         case "starting": return root.russian ? qsTr("Запуск фильтра…") : qsTr("Starting the filter…");
                         case "active": return (root.russian ? qsTr("%1 кадр/с") : qsTr("%1 fps")).arg(Number(root.backend.framegenTarget.toFixed(2)));
+                        case "outputTimeout": return root.russian ? qsTr("Фильтр не успел запуститься") : qsTr("The filter timed out");
+                        case "slow": return root.russian ? qsTr("Генерация отключена из-за пропусков кадров") : qsTr("Frame generation stopped after repeated frame drops");
                         case "guarded": return root.russian ? qsTr("Недоступно для этого видео") : qsTr("Unavailable for this video");
                         default: return "";
                         }
@@ -387,12 +389,13 @@ Popup {
                 Heading { text: root.russian ? qsTr("Масштабирование") : qsTr("Upscaling") }
                 FxChoice {
                     id: shader
+                    objectName: "shaderChoice"
                     model: ["auto", "off", "fsr", "anime4k_a", "anime4k_b", "anime4k_c", "anime4k_aa",
                             "anime4k_bb", "anime4k_ca", "anime4k_gan_2x", "anime4k_gan_3x", "anime4k_gan_4x"]
                     readonly property var labels: [root.automatic, root.off, "FSR", "Anime4K A", "Anime4K B", "Anime4K C",
                                                    "Anime4K A+A", "Anime4K B+B", "Anime4K C+A", "Anime4K GAN 2×", "Anime4K GAN 3×", "Anime4K GAN 4×"]
                     currentIndex: model.indexOf(root.backend.shaderChoice)
-                    displayText: labels[currentIndex] || ""
+                    displayText: labels[model.indexOf(root.backend.effectiveShader)] || root.off
                     delegate: ItemDelegate {
                         required property int index
                         width: shader.width
@@ -403,9 +406,12 @@ Popup {
                 }
                 Heading { text: root.russian ? qsTr("Тип видео") : qsTr("Video type") }
                 FxChoice {
+                    objectName: "contentChoice"
                     model: [root.automatic, root.russian ? qsTr("Аниме") : qsTr("Anime"), root.russian ? qsTr("Фильм") : qsTr("Movie")]
                     readonly property var values: ["auto", "anime", "movie"]
                     currentIndex: values.indexOf(root.backend.contentChoice)
+                    displayText: model[values.indexOf(root.backend.effectiveContent)]
+                                 || (root.russian ? qsTr("Не определён") : qsTr("Undetermined"))
                     onActivated: index => root.backend.changeContent(values[index])
                 }
             }

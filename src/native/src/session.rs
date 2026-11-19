@@ -585,5 +585,15 @@ pub fn media_path(input: &str) -> Result<String, String> {
     let path = path
         .canonicalize()
         .map_err(|error| format!("Open media: {error}"))?;
-    Ok(path.to_string_lossy().trim_start_matches("\\\\?\\").into())
+    let path = path.to_string_lossy();
+    #[cfg(windows)]
+    {
+        if let Some(unc) = path.strip_prefix(r"\\?\UNC\") {
+            return Ok(format!(r"\\{unc}"));
+        }
+        if let Some(drive_path) = path.strip_prefix(r"\\?\") {
+            return Ok(drive_path.into());
+        }
+    }
+    Ok(path.into_owned())
 }

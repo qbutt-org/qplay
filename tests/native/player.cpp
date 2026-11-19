@@ -485,6 +485,11 @@ int main(int argc, char *argv[])
             }
             if (qEnvironmentVariableIsSet("QPLAY_LOCAL_FILE_QA"))
             {
+                backend.changeMute(true);
+                wait([&] { return backend.muted(); }, "Muting the file playback fixture failed");
+                backend.openMedia(secondMedia);
+                wait([&] { return backend.mediaLoaded() && backend.position() > 0.5; },
+                    "Native file path did not become loaded");
                 const QString fileUrl = QUrl::fromLocalFile(secondMedia).toString();
                 backend.openMedia(fileUrl);
                 wait([&] { return backend.mediaLoaded() && backend.position() > 0.5; },
@@ -496,11 +501,12 @@ int main(int argc, char *argv[])
                     "File URL transport controls remained disabled");
                 click(window, *pause);
                 wait([&] { return backend.paused(); }, "Pause after File dialog failed");
-                backend.seek(12.0);
-                wait([&] { return std::abs(backend.position() - 12.0) < 0.2; },
+                const double midpoint = backend.duration() / 2;
+                backend.seek(midpoint);
+                wait([&] { return std::abs(backend.position() - midpoint) < 0.2; },
                     "Seek after File dialog failed");
                 click(window, *pause);
-                wait([&] { return !backend.paused() && backend.position() > 12.2; },
+                wait([&] { return !backend.paused() && backend.position() > midpoint + 0.2; },
                     "Resume after File dialog failed");
                 tick();
                 require(target.toImage().save(evidencePrefix + QStringLiteral(".png")),
@@ -511,6 +517,7 @@ int main(int argc, char *argv[])
                 backend.stop();
                 evidence = {
                     {QStringLiteral("fileUrl"), fileUrl},
+                    {QStringLiteral("nativeFilePathLoaded"), true},
                     {QStringLiteral("fileDialogPauseSeekResume"), true},
                     {QStringLiteral("malformedFileUrlRejected"), true},
                     {QStringLiteral("exitCode"), 0}
@@ -907,10 +914,28 @@ int main(int argc, char *argv[])
             auto *framegenOn = findVisualItem(popupContent, QStringLiteral("framegenOptionon"));
             require(framegenOn && framegenOn->isEnabled() == backend.framegenSupported(),
                 "FX control disagrees with native frame generation support");
+            auto *shaderChoice = findVisualItem(popupContent, QStringLiteral("shaderChoice"));
+            auto *contentChoice = findVisualItem(popupContent, QStringLiteral("contentChoice"));
+            require(shaderChoice && contentChoice, "FX selectors unavailable");
+            require(shaderChoice->property("displayText").toString() == QStringLiteral("Anime4K A"),
+                "FX shader label does not show the applied shader");
+            require(contentChoice->property("displayText").toString() != QStringLiteral("Auto"),
+                "FX video type label does not show the effective classification");
 
             require(QMetaObject::invokeMethod(playbackMenu, "close"), "Close playback menu failed");
             wait([&] { return !playbackMenu->property("opened").toBool(); },
                 "Playback menu did not close");
+            hover(window, *pauseButton);
+            click(window, *pauseButton);
+            wait([&] { return backend.state() == Qplay::Playback::State::Playing; },
+                "Playback did not resume for HUD idle check");
+            wait([&] { return !root->property("controlsShown").toBool(); },
+                "A stationary pointer over the toolbar kept the HUD visible");
+            hover(window, *root);
+            wait([&] { return root->property("controlsShown").toBool(); },
+                "Pointer movement did not restore the HUD");
+            click(window, *pauseButton);
+            wait([&] { return backend.paused(); }, "Playback did not pause after HUD idle check");
             QQmlComponent settingsComponent(&qml);
             settingsComponent.loadFromModule(QStringLiteral("Qplay.Views"), QStringLiteral("SettingsPanel"));
             if (settingsComponent.isError())

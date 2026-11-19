@@ -155,6 +155,7 @@ pub mod ffi {
         #[qproperty(QString, framegen_choice, cxx_name = "framegenChoice", READ = framegen_choice, NOTIFY = state_changed)]
         #[qproperty(bool, framegen_supported, cxx_name = "framegenSupported", READ = framegen_supported, CONSTANT)]
         #[qproperty(QString, effective_shader, cxx_name = "effectiveShader", READ = effective_shader, NOTIFY = state_changed)]
+        #[qproperty(QString, effective_content, cxx_name = "effectiveContent", READ = effective_content, NOTIFY = state_changed)]
         #[qproperty(QString, framegen_status, cxx_name = "framegenStatus", READ = framegen_status, NOTIFY = state_changed)]
         #[qproperty(QString, gpu_error, cxx_name = "gpuError", READ = gpu_error, NOTIFY = state_changed)]
         #[qproperty(QString, update_state, cxx_name = "updateState", READ = update_state, NOTIFY = state_changed)]
@@ -245,6 +246,8 @@ pub mod ffi {
         fn framegen_supported(&self) -> bool;
         #[cxx_name = "effectiveShader"]
         fn effective_shader(&self) -> QString;
+        #[cxx_name = "effectiveContent"]
+        fn effective_content(&self) -> QString;
         #[cxx_name = "framegenStatus"]
         fn framegen_status(&self) -> QString;
         #[cxx_name = "gpuError"]
@@ -762,6 +765,10 @@ impl ffi::PlayerController {
 
     fn effective_shader(&self) -> QString {
         QString::from(self.gpu.applied_shader.id())
+    }
+
+    fn effective_content(&self) -> QString {
+        QString::from(self.content_kind().id())
     }
 
     fn framegen_status(&self) -> QString {

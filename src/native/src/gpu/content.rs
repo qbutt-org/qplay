@@ -5,6 +5,16 @@ pub enum ContentKind {
     Unknown,
 }
 
+impl ContentKind {
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Anime => "anime",
+            Self::Movie => "movie",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ContentChoice {
     Auto,

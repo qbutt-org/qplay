@@ -344,6 +344,7 @@ fn main() -> Result<(), String> {
     let started = Instant::now();
     let store = RuntimeStore::new(&PathBuf::from(&arguments[0]), &PathBuf::from(&arguments[1]));
     let mut runtime = store.prepare(&cancel)?;
+    let source = Rate::new(24000, 1001).unwrap();
     if handoff_mode {
         runtime = handoff(runtime, width, height, delay.unwrap())?;
         (width, height) = (641, 359);
@@ -356,7 +357,8 @@ fn main() -> Result<(), String> {
                 cancel.store(true, Ordering::Release);
             })
         });
-        let result = runtime.prepare_engine(width, height, &cancel);
+        let inference = framegen::inference_size(runtime.backend(), width, height, source.fps());
+        let result = runtime.prepare_engine(inference.width, inference.height, &cancel);
         if let Some(cancellation) = cancellation {
             cancellation
                 .join()
@@ -370,7 +372,6 @@ fn main() -> Result<(), String> {
             return Err(error);
         }
     }
-    let source = Rate::new(24000, 1001).unwrap();
     let target = Target {
         rate: Rate::new(60000, 1001).unwrap(),
         multiplier: None,

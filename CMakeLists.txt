@@ -98,6 +98,10 @@ target_link_libraries(qplay_views
 )
 
 qt_add_executable(qplay-native WIN32 src/native/cpp/main.cpp)
+if(WIN32)
+    target_sources(qplay-native PRIVATE src/native/cpp/qplay.rc)
+    target_include_directories(qplay-native PRIVATE assets)
+endif()
 qt_add_resources(qplay-native "app_icon"
     FILES assets/qplay.ico
 )

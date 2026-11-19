@@ -16,6 +16,23 @@ pub struct ModelShape {
     pub height: u32,
 }
 
+pub fn inference_size(backend: Backend, width: u32, height: u32, source_fps: f64) -> ModelShape {
+    // RIFE cost grows with both the source cadence and the number of input pixels.
+    // Keep decoded frames at full size and limit only the interpolation inputs.
+    let pixels_per_second = match backend {
+        Backend::OpenVino => 8_000_000.0,
+        Backend::TensorRt => 65_000_000.0,
+    };
+    let pixels = f64::from(width) * f64::from(height);
+    let scale = (pixels_per_second / (pixels * source_fps.max(30.0)))
+        .sqrt()
+        .min(1.0);
+    ModelShape {
+        width: ((f64::from(width) * scale).round() as u32).max(1),
+        height: ((f64::from(height) * scale).round() as u32).max(1),
+    }
+}
+
 pub fn model_shape(backend: Backend, width: u32, height: u32) -> ModelShape {
     // The pinned OpenVINO model halves each extent before reflecting to a
     // multiple of 64. OpenVINO requires that padding be smaller than the
@@ -174,31 +191,40 @@ pub fn target_ladder(source: Rate, display: Rate, backend: Backend) -> Vec<Targe
         return targets;
     }
 
-    if backend == Backend::OpenVino {
-        return vec![Target {
+    let mut targets = if backend == Backend::OpenVino {
+        vec![Target {
             rate: double,
             multiplier: Some(2),
+        }]
+    } else {
+        let ratio_num = u128::from(display.num) * u128::from(source.den);
+        let ratio_den = u128::from(display.den) * u128::from(source.num);
+        let whole = ratio_num / ratio_den;
+        let exact = ratio_num % ratio_den == 0;
+        let mut targets = vec![Target {
+            rate: display,
+            multiplier: exact.then(|| u64::try_from(whole).ok()).flatten(),
         }];
-    }
-
-    let ratio_num = u128::from(display.num) * u128::from(source.den);
-    let ratio_den = u128::from(display.den) * u128::from(source.num);
-    let whole = ratio_num / ratio_den;
-    let exact = ratio_num % ratio_den == 0;
-    let mut targets = vec![Target {
-        rate: display,
-        multiplier: exact.then(|| u64::try_from(whole).ok()).flatten(),
-    }];
-    // More than 16 interpolated frames per decoded frame is outside the
-    // useful playback range and would create an unbounded ladder for bad data.
-    for multiplier in (2..=u64::try_from(whole.min(16)).unwrap()).rev() {
-        let Some(candidate) = source.multiply(multiplier, 1) else {
-            continue;
-        };
-        if candidate.below(display) {
+        // More than 16 interpolated frames per decoded frame is outside the
+        // useful playback range and would create an unbounded ladder for bad data.
+        for multiplier in (2..=u64::try_from(whole.min(16)).unwrap()).rev() {
+            let Some(candidate) = source.multiply(multiplier, 1) else {
+                continue;
+            };
+            if candidate.below(display) {
+                targets.push(Target {
+                    rate: candidate,
+                    multiplier: Some(multiplier),
+                });
+            }
+        }
+        targets
+    };
+    for (num, den) in [(4, 3), (10, 9)] {
+        if let Some(rate) = source.multiply(num, den) {
             targets.push(Target {
-                rate: candidate,
-                multiplier: Some(multiplier),
+                rate,
+                multiplier: None,
             });
         }
     }
@@ -312,6 +338,7 @@ pub struct QualitySample {
 pub enum QualityAction {
     Keep,
     Lower,
+    OutputTimeout,
     DisableUntilNextVideo,
 }
 
@@ -405,7 +432,12 @@ impl SessionQuality {
                 return QualityAction::Keep;
             }
             self.filter_changed();
-            return self.lower();
+            let action = self.lower();
+            return if action == QualityAction::DisableUntilNextVideo {
+                QualityAction::OutputTimeout
+            } else {
+                action
+            };
         }
 
         if !state.output_ready || state.sample.playback_position <= 0.0 {
@@ -470,10 +502,10 @@ impl SessionQuality {
 
         let target_fps = self.target().rate.fps();
         let progress = last.playback_position - first.playback_position;
-        let frame_drops = last.frame_drops - first.frame_drops;
+        let drop_fraction = (last.frame_drops - first.frame_drops) as f64 / (target_fps * seconds);
         let unhealthy = progress < seconds * 0.90
             || last.filter_fps < target_fps * 0.97
-            || frame_drops > 1
+            || drop_fraction > 0.05
             || last.decoder_drops > first.decoder_drops
             || last.mistimed_frames - first.mistimed_frames > 1
             || last.delayed_frames - first.delayed_frames > 2;
@@ -484,7 +516,7 @@ impl SessionQuality {
 
         let severe = progress < seconds * 0.75
             || last.filter_fps < target_fps * 0.90
-            || frame_drops as f64 > (target_fps * seconds * 0.03).max(4.0);
+            || drop_fraction > 0.15;
         self.bad_windows += 1;
         if !severe && self.bad_windows < 2 {
             return QualityAction::Keep;

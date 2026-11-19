@@ -12,7 +12,8 @@ Item {
     property bool settingsOpen: false
     property bool transportVisible: true
     readonly property string iconRoot: "qrc:/qt/qml/Qplay/Views/assets/icons/"
-    readonly property bool controlsShown: backend.state !== Playback.Playing || transportVisible || settingsOpen || playbackMenu.visible || topHover.hovered || bottomHover.hovered
+    readonly property bool controlsInUse: settingsOpen || playbackMenu.visible || seekSlider.pressed || volumeSlider.pressed
+    readonly property bool controlsShown: backend.state !== Playback.Playing || transportVisible || controlsInUse
     readonly property int positionSeconds: Math.floor(backend.position)
     readonly property int durationSeconds: Math.floor(backend.duration)
 
@@ -49,8 +50,18 @@ Item {
 
     HoverHandler {
         id: videoHover
+        property point lastPosition
         cursorShape: root.controlsShown ? Qt.ArrowCursor : Qt.BlankCursor
-        onPointChanged: root.revealControls()
+        onHoveredChanged: {
+            if (hovered)
+                root.revealControls();
+        }
+        onPointChanged: {
+            if (hovered && (point.position.x !== lastPosition.x || point.position.y !== lastPosition.y)) {
+                lastPosition = point.position;
+                root.revealControls();
+            }
+        }
     }
 
     TapHandler {
@@ -131,7 +142,7 @@ Item {
     Timer {
         id: hideTimer
         interval: 2200
-        running: root.transportVisible && root.backend.state === Playback.Playing && !root.settingsOpen && !playbackMenu.visible && !topHover.hovered && !bottomHover.hovered
+        running: root.transportVisible && root.backend.state === Playback.Playing && !root.controlsInUse
         onTriggered: root.transportVisible = false
     }
 
@@ -225,10 +236,6 @@ Item {
             }
         }
 
-        HoverHandler {
-            id: topHover
-        }
-
         RowLayout {
             anchors.left: parent.left
             anchors.right: parent.right
@@ -298,10 +305,6 @@ Item {
 
         MouseArea {
             anchors.fill: parent
-        }
-
-        HoverHandler {
-            id: bottomHover
         }
 
         ColumnLayout {
